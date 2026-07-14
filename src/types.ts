@@ -1,15 +1,17 @@
-export type Pico = {
+export type PicoType = {
     name: string,
     id: string,
     connected: boolean,
-    state: {
-        temperature: number,
-        moisture: number,
-        light: number
-    }
+    state: PicoState
+}
+
+export type PicoState = {
+    temperature: number,
+    moisture: number,
+    light: number
 }
 
 export type Respond = {
     state: number,
-    pico: Pico[]
+    pico: PicoType[]
 }

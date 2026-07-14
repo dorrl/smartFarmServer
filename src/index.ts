@@ -2,7 +2,7 @@ import express from 'express';
 import http from 'http';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { Respond } from './types';
+import { PicoType, Respond } from './types';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -28,6 +28,11 @@ app.get('/', (req, res) => {
   }
   res.json(respond);
 });
+
+app.post('/state', (req, res) => {
+  const body: PicoType = req.body
+
+})
 
 // HTTPS 대신 HTTP 서버를 생성합니다.
 http.createServer(app).listen(PORT, "0.0.0.0", () => {
