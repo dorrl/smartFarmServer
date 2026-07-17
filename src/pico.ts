@@ -1,4 +1,4 @@
-import { PicoState, PicoType } from "./types";
+import { PicoState, PicoType } from "./types.js";
 
 export class Pico {
     name: string
@@ -15,6 +15,10 @@ export class Pico {
         this.id = pico.id
         this.connected = pico.connected
         this.state = pico.state
+    }
+
+    static create(pico: PicoType) {
+        picoList[pico.id] = new Pico(pico)
     }
 
     import(pico: PicoType) {
@@ -38,4 +42,15 @@ export class Pico {
     }
 }
 
-const picoList: {[id: string]: Pico} = {}
+export const picoList: {[id: string]: Pico} = {}
+
+Pico.create({
+    id: 'aaaa',
+    name: 'aaa',
+    connected: true,
+    state: {
+        temperature: 10,
+        moisture: 10,
+        light: 1
+    }
+})

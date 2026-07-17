@@ -22,11 +22,14 @@
     "build": "tsgo build --ignoreConfig"
   },
   "dependencies": {
+    "@abandonware/noble": "^1.9.2-26",
     "@types/express": "^5.0.6",
     "@types/node": "^25.5.0",
     "@typescript/native-preview": "^7.0.0-dev.20260326.1",
     "express": "^5.2.1",
     "typescript": "^6.0.2"
   },
-  "devDependencies": {}
+  "devDependencies": {
+    "@types/noble": "^0.0.44"
+  }
 }
