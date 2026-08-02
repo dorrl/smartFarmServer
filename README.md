@@ -6,7 +6,7 @@ ngrok을 이용할 예정\
 
 ### 스크립트 작성용 설치
 ```powershell
-git clone https://github.com/hyunye/smartFarmServer.git
+git clone https://github.com/dorrl/smartFarmServer.git
 npm install
 ```
 ### 서버 실행

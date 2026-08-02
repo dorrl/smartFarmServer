@@ -5,16 +5,16 @@
   "keywords": [
     "cli"
   ],
-  "homepage": "https://github.com/hyunye/smartFarmServer#readme",
+  "homepage": "https://github.com/dorrl/smartFarmServer#readme",
   "bugs": {
-    "url": "https://github.com/hyunye/smartFarmServer/issues"
+    "url": "https://github.com/dorrl/smartFarmServer/issues"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/hyunye/smartFarmServer.git"
+    "url": "git+https://github.com/dorrl/smartFarmServer.git"
   },
   "license": "ISC",
-  "author": "hyunye",
+  "author": "dorrl",
   "type": "module",
   "main": "index.js",
   "scripts": {
