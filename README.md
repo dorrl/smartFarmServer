@@ -1,19 +1,37 @@
-# 스마트팜 서버
+# SmartFarm Server
 
-typescript, express로 제작하며 컴파일은 tsgo를 이용함.\
-ngrok을 이용할 예정\
-하드웨어에서 설치할때는 npm을 이용할 예정
+The server receives newline-delimited JSON sensor readings from a BLE UART device and exposes them to the mobile app.
 
-### 스크립트 작성용 설치
-```powershell
-git clone https://github.com/dorrl/smartFarmServer.git
-npm install
+## BLE UART contract
+
+The Pico's Bluetooth module must be a **BLE UART** module (not classic Bluetooth-only HC-05/HC-06). It must advertise a name containing `pico`, `smartfarm`, `mydevice`, or `farm`, expose a Notify/Indicate characteristic for readings, and a Write/Write Without Response characteristic for commands.
+
+Reading sent by the Pico:
+
+```json
+{"temperature":24.3,"moisture":48,"light":320}
 ```
-### 서버 실행
+
+Watering command sent by the server:
+
+```json
+{"command":"water","enabled":true,"durationSeconds":30}
+```
+
+## Run
+
 ```powershell
+npm install
+$env:SMARTFARM_API_KEY = "change-this-to-a-long-secret"
 npm run start
 ```
-### 서버 빌드
-```powershell
-npm run build
-```
+
+`GET /state`, `GET /notifications`, and `GET /picos/:id/readings` are read-only. All write endpoints require the `X-API-Key` header. Sensor state, history, and alerts persist in `data/smartfarm-state.json`.
+
+## API
+
+- `GET /state` — current Pico status
+- `GET /notifications` — automatically generated threshold and disconnect alerts
+- `GET /picos/:id/readings?limit=100` — recent sensor history
+- `POST /picos/:id/commands` — authenticated watering or ping command
+- `POST /setPico` — authenticated maintenance/gateway endpoint

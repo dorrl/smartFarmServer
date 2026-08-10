@@ -1,56 +1,124 @@
-import { PicoState, PicoType } from "./types.js";
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { Alert, PicoState, PicoType, Reading } from './types.js';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const dataDir = path.resolve(__dirname, '../data');
+const dataFile = path.join(dataDir, 'smartfarm-state.json');
+const MAX_HISTORY_PER_PICO = 720;
+
+type PersistedData = {
+    picos: PicoType[];
+    readings: Reading[];
+    alerts: Alert[];
+};
+
+let readings: Reading[] = [];
+let alerts: Alert[] = [];
+
+function validState(state: PicoState): boolean {
+    return Number.isFinite(state.temperature) && Number.isFinite(state.moisture) && Number.isFinite(state.light)
+        && state.temperature >= -50 && state.temperature <= 100
+        && state.moisture >= 0 && state.moisture <= 100
+        && state.light >= 0 && state.light <= 200_000;
+}
+
+function addAlert(pico: Pico) {
+    const { temperature, moisture } = pico.state;
+    const problems: Array<[string, Alert['level']]> = [];
+    if (temperature < 15 || temperature > 30) problems.push([`온도 이상: ${temperature}°C`, 'warning']);
+    if (moisture < 30) problems.push([`토양 수분 부족: ${moisture}%`, 'warning']);
+
+    for (const [message, level] of problems) {
+        const duplicate = alerts.some(alert => alert.picoId === pico.id && alert.message === message && !alert.resolved);
+        if (!duplicate) alerts.unshift({ id: crypto.randomUUID(), picoId: pico.id, message, level, createdAt: new Date().toISOString(), resolved: false });
+    }
+    if (problems.length === 0) {
+        alerts.filter(alert => alert.picoId === pico.id && !alert.resolved).forEach(alert => { alert.resolved = true; });
+    }
+    alerts = alerts.slice(0, 500);
+}
+
+function persist() {
+    fs.mkdirSync(dataDir, { recursive: true });
+    const data: PersistedData = { picos: Object.values(picoList).map(pico => pico.export()), readings, alerts };
+    const temporaryFile = `${dataFile}.tmp`;
+    fs.writeFileSync(temporaryFile, JSON.stringify(data, null, 2), 'utf8');
+    fs.renameSync(temporaryFile, dataFile);
+}
 
 export class Pico {
-    name: string
-    id: string
-    connected: boolean
-    state: {
-        temperature: number
-        moisture: number
-        light: number
-    }
+    name: string;
+    id: string;
+    connected: boolean;
+    state: PicoState;
+    watering: boolean;
+    updatedAt: string;
 
-    constructor (pico: PicoType) {
-        this.name = pico.name
-        this.id = pico.id
-        this.connected = pico.connected
-        this.state = pico.state
-    }
-
-    static create(pico: PicoType) {
-        picoList[pico.id] = new Pico(pico)
-    }
-
-    import(pico: PicoType) {
-        this.name = pico.name
-        this.id = pico.id
-        this.connected = pico.connected
-        this.state = pico.state
+    constructor(pico: PicoType) {
+        if (!validState(pico.state)) throw new Error('Invalid sensor state');
+        this.name = pico.name;
+        this.id = pico.id;
+        this.connected = pico.connected;
+        this.state = pico.state;
+        this.watering = pico.watering ?? false;
+        this.updatedAt = pico.updatedAt ?? new Date().toISOString();
     }
 
     export(): PicoType {
-        return ({
-            name: this.name,
-            id: this.id,
-            connected: this.connected,
-            state: this.state
-        })
+        return { name: this.name, id: this.id, connected: this.connected, state: this.state, watering: this.watering, updatedAt: this.updatedAt };
     }
 
     setState(state: PicoState) {
-        this.state = state
+        if (!validState(state)) throw new Error('Sensor values are outside the allowed range');
+        this.state = state;
+        this.updatedAt = new Date().toISOString();
+        readings.unshift({ picoId: this.id, ...state, recordedAt: this.updatedAt });
+        const picoReadings = readings.filter(reading => reading.picoId === this.id);
+        if (picoReadings.length > MAX_HISTORY_PER_PICO) {
+            const remove = new Set(picoReadings.slice(MAX_HISTORY_PER_PICO));
+            readings = readings.filter(reading => !remove.has(reading));
+        }
+        addAlert(this);
+        persist();
+    }
+
+    setWatering(watering: boolean) {
+        this.watering = watering;
+        this.updatedAt = new Date().toISOString();
+        persist();
+    }
+
+    setConnected(connected: boolean) {
+        this.connected = connected;
+        this.updatedAt = new Date().toISOString();
+        if (!connected) alerts.unshift({ id: crypto.randomUUID(), picoId: this.id, message: '기기 연결이 끊겼습니다.', level: 'error', createdAt: this.updatedAt, resolved: false });
+        persist();
     }
 }
 
-export const picoList: {[id: string]: Pico} = {}
+export const picoList: Record<string, Pico> = {};
 
-Pico.create({
-    id: 'aaaa',
-    name: 'aaa',
-    connected: true,
-    state: {
-        temperature: 10,
-        moisture: 10,
-        light: 1
+export function getReadings(picoId: string, limit = 100): Reading[] {
+    return readings.filter(reading => reading.picoId === picoId).slice(0, Math.min(limit, 720));
+}
+
+export function getAlerts(): Alert[] { return alerts; }
+
+export function loadPersistedData() {
+    if (!fs.existsSync(dataFile)) return;
+    try {
+        const data: PersistedData = JSON.parse(fs.readFileSync(dataFile, 'utf8'));
+        readings = Array.isArray(data.readings) ? data.readings : [];
+        alerts = Array.isArray(data.alerts) ? data.alerts : [];
+        for (const saved of data.picos ?? []) {
+            const id = saved.id.toLowerCase().replace(/[^a-z0-9]/g, '');
+            if (id) picoList[id] = new Pico({ ...saved, id, connected: false });
+        }
+    } catch (error) {
+        console.error('[Storage] Saved state could not be loaded:', error);
     }
-})
+}
+
+export function saveState() { persist(); }
