@@ -1,8 +1,8 @@
 import express from 'express';
 import http from 'node:http';
-import { Pico, getAlerts, getReadings, loadPersistedData, picoList, saveState } from './pico.js';
-import { PicoCommand, PicoState, PicoType, Respond } from './types.js';
-import { sendPicoCommand } from './bluetooth.js';
+import { Pico, getAlerts, getReadings, getSettings, loadPersistedData, picoList, saveState, updateSettings } from './pico.js';
+import { PicoState, PicoType, Respond, ServerSettings } from './types.js';
+import { broadcastMeasurementInterval } from './bluetooth.js';
 
 const PORT = Number(process.env.PORT) || Number(process.argv[2]) || 3000;
 const API_KEY = process.env.SMARTFARM_API_KEY;
@@ -56,6 +56,23 @@ app.get('/picos/:id/readings', (req, res) => {
 
 app.get('/notifications', (_req, res) => res.json({ state: 200, notifications: getAlerts() }));
 
+app.get('/settings', (_req, res) => res.json({ state: 200, settings: getSettings() }));
+
+app.post('/settings', requireApiKey, async (req, res) => {
+    const body = req.body as Partial<ServerSettings>;
+    const measurementIntervalMinutes = body.measurementIntervalMinutes;
+    const retentionMonths = body.retentionMonths;
+    if (typeof measurementIntervalMinutes !== 'number' || !Number.isInteger(measurementIntervalMinutes) || measurementIntervalMinutes < 1 || measurementIntervalMinutes > 1440) {
+        return res.status(400).json({ error: 'measurementIntervalMinutes must be an integer from 1 to 1440' });
+    }
+    if (typeof retentionMonths !== 'number' || !Number.isInteger(retentionMonths) || retentionMonths < 1 || retentionMonths > 60) {
+        return res.status(400).json({ error: 'retentionMonths must be an integer from 1 to 60' });
+    }
+    updateSettings({ measurementIntervalMinutes, retentionMonths });
+    await broadcastMeasurementInterval(measurementIntervalMinutes);
+    res.json({ state: 200, settings: getSettings() });
+});
+
 // Reserved for a trusted gateway or maintenance tool. Sensor data arriving over BLE
 // updates state directly and never needs this HTTP endpoint.
 app.post('/setPico', requireApiKey, (req, res) => {
@@ -79,24 +96,6 @@ app.post('/setPico', requireApiKey, (req, res) => {
         res.json({ state: 200, pico: pico.export() });
     } catch (error) {
         res.status(400).json({ error: error instanceof Error ? error.message : 'Invalid request' });
-    }
-});
-
-app.post('/picos/:id/commands', requireApiKey, async (req, res) => {
-    const id = cleanId(req.params.id);
-    if (!id || !picoList[id]) return res.status(404).json({ error: 'Pico not found' });
-    const command = req.body as PicoCommand;
-    if (!command || (command.command !== 'water' && command.command !== 'ping')) return res.status(400).json({ error: 'Unsupported command' });
-    if (command.command === 'water' && (typeof command.enabled !== 'boolean' || (command.durationSeconds !== undefined && (!Number.isInteger(command.durationSeconds) || command.durationSeconds < 1 || command.durationSeconds > 600)))) {
-        return res.status(400).json({ error: 'Invalid watering command' });
-    }
-
-    try {
-        await sendPicoCommand(id, command);
-        if (command.command === 'water') picoList[id].setWatering(command.enabled);
-        res.json({ state: 200, pico: picoList[id].export() });
-    } catch (error) {
-        res.status(503).json({ error: error instanceof Error ? error.message : 'Command delivery failed' });
     }
 });
 

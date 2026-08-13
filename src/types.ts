@@ -9,7 +9,6 @@ export type PicoType = {
     id: string;
     connected: boolean;
     state: PicoState;
-    watering?: boolean;
     updatedAt?: string;
 };
 
@@ -29,11 +28,11 @@ export type Alert = {
     resolved: boolean;
 };
 
-export type PicoCommand =
-    | { command: 'water'; enabled: boolean; durationSeconds?: number }
-    | { command: 'ping' };
-
-export type Respond = {
-    state: number;
-    pico: PicoType[];
+export type ServerSettings = {
+    measurementIntervalMinutes: number;
+    retentionMonths: number;
 };
+
+export type PicoCommand = { command: 'setMeasurementInterval'; minutes: number } | { command: 'measureNow' };
+
+export type Respond = { state: number; pico: PicoType[]; };

@@ -1,6 +1,7 @@
 import noble from '@abandonware/noble';
 import { Pico, picoList } from './pico.js';
 import { PicoCommand, PicoState } from './types.js';
+import { getSettings } from './pico.js';
 
 // active BLE connections: maps picoId to noble Peripheral
 const connectedPeripherals = new Map<string, any>();
@@ -195,6 +196,11 @@ noble.on('discover', async (peripheral) => {
     );
     if (writable) writableCharacteristics.set(picoId, writable);
 
+    if (writable) {
+      await sendPicoCommand(picoId, { command: 'setMeasurementInterval', minutes: getSettings().measurementIntervalMinutes });
+      await sendPicoCommand(picoId, { command: 'measureNow' });
+    }
+
     // 1. Subscribe to Notify/Indicate characteristics
     for (const characteristic of characteristics) {
       const props = characteristic.properties;
@@ -275,4 +281,10 @@ export async function sendPicoCommand(picoId: string, command: PicoCommand): Pro
   const payload = Buffer.from(`${JSON.stringify(command)}\n`, 'utf8');
   const withoutResponse = characteristic.properties.includes('writeWithoutResponse');
   await characteristic.writeAsync(payload, withoutResponse);
+}
+
+export async function broadcastMeasurementInterval(minutes: number): Promise<void> {
+  const results = await Promise.allSettled([...connectedPeripherals.keys()].map(id => sendPicoCommand(id, { command: 'setMeasurementInterval', minutes })));
+  const failed = results.filter(result => result.status === 'rejected').length;
+  if (failed) console.warn(`[Bluetooth] Could not update measurement interval on ${failed} device(s).`);
 }

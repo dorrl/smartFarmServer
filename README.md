@@ -1,21 +1,31 @@
 # SmartFarm Server
 
-The server receives newline-delimited JSON sensor readings from a BLE UART device and exposes them to the mobile app.
+The server receives Pico sensor readings over BLE UART, stores them locally, and makes them available to the mobile app.
 
-## BLE UART contract
+## Sensor schedule and retention
 
-The Pico's Bluetooth module must be a **BLE UART** module (not classic Bluetooth-only HC-05/HC-06). It must advertise a name containing `pico`, `smartfarm`, `mydevice`, or `farm`, expose a Notify/Indicate characteristic for readings, and a Write/Write Without Response characteristic for commands.
+- Default measurement interval: **60 minutes**
+- Default retention period: **6 months**
+- Change both values in the app's Settings screen for each registered server.
+- The server sends the current interval to every connected Pico immediately after a setting change and whenever it reconnects.
+- Every received reading is appended to `data/smartfarm-state.json`; old readings are removed automatically according to the retention period.
 
-Reading sent by the Pico:
+## BLE UART protocol
+
+The Pico must provide a writable BLE characteristic and a Notify/Indicate characteristic. The server sends newline-delimited JSON commands:
+
+```json
+{"command":"setMeasurementInterval","minutes":60}
+```
+
+```json
+{"command":"measureNow"}
+```
+
+The Pico returns a newline-delimited sensor reading:
 
 ```json
 {"temperature":24.3,"moisture":48,"light":320}
-```
-
-Watering command sent by the server:
-
-```json
-{"command":"water","enabled":true,"durationSeconds":30}
 ```
 
 ## Run
@@ -26,12 +36,11 @@ $env:SMARTFARM_API_KEY = "change-this-to-a-long-secret"
 npm run start
 ```
 
-`GET /state`, `GET /notifications`, and `GET /picos/:id/readings` are read-only. All write endpoints require the `X-API-Key` header. Sensor state, history, and alerts persist in `data/smartfarm-state.json`.
-
 ## API
 
-- `GET /state` — current Pico status
-- `GET /notifications` — automatically generated threshold and disconnect alerts
-- `GET /picos/:id/readings?limit=100` — recent sensor history
-- `POST /picos/:id/commands` — authenticated watering or ping command
+- `GET /state` — current Pico states
+- `GET /settings` — measurement interval and retention period
+- `POST /settings` — update settings (requires `X-API-Key`)
+- `GET /picos/:id/readings?limit=100` — stored readings
+- `GET /notifications` — threshold and connection alerts
 - `POST /setPico` — authenticated maintenance/gateway endpoint
