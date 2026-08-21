@@ -1,6 +1,6 @@
 import express from 'express';
 import http from 'node:http';
-import { Pico, getAlerts, getReadings, getSettings, loadPersistedData, picoList, saveState, updateSettings } from './pico.js';
+import { Pico, clearTelemetry, getAlerts, getReadings, getSettings, loadPersistedData, picoList, saveState, updateSettings } from './pico.js';
 import { PicoState, PicoType, Respond, ServerSettings } from './types.js';
 import { broadcastMeasurementInterval } from './bluetooth.js';
 
@@ -15,7 +15,7 @@ app.use((req, res, next) => {
     // Native clients do not need CORS, but this allows the Expo web build to read monitoring data.
     res.setHeader('Access-Control-Allow-Origin', process.env.CORS_ORIGIN ?? '*');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-API-Key');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
     if (req.method === 'OPTIONS') return res.sendStatus(204);
     next();
 });
@@ -55,6 +55,12 @@ app.get('/picos/:id/readings', (req, res) => {
 });
 
 app.get('/notifications', (_req, res) => res.json({ state: 200, notifications: getAlerts() }));
+
+// Deletes only saved readings and alerts. Registered Pico devices and measurement settings are preserved.
+app.delete('/data', requireApiKey, (_req, res) => {
+    clearTelemetry();
+    res.json({ state: 200, message: 'Saved readings and alerts were deleted.' });
+});
 
 app.get('/settings', (_req, res) => res.json({ state: 200, settings: getSettings() }));
 

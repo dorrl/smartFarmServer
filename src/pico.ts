@@ -78,6 +78,7 @@ export class Pico {
 export const picoList: Record<string, Pico> = {};
 export function getReadings(picoId: string, limit = 100): Reading[] { pruneReadings(); return readings.filter(reading => reading.picoId === picoId).slice(0, Math.min(limit, 10_000)); }
 export function getAlerts(): Alert[] { return alerts; }
+export function clearTelemetry() { readings = []; alerts = []; persist(); }
 export function getSettings(): ServerSettings { return { ...settings }; }
 export function updateSettings(next: ServerSettings) { settings = { ...next }; pruneReadings(); persist(); }
 export function loadPersistedData() {

@@ -43,4 +43,5 @@ npm run start
 - `POST /settings` — update settings (requires `X-API-Key`)
 - `GET /picos/:id/readings?limit=100` — stored readings
 - `GET /notifications` — threshold and connection alerts
+- `DELETE /data` — delete all saved readings and alerts (requires `X-API-Key`; Pico registration and settings are kept)
 - `POST /setPico` — authenticated maintenance/gateway endpoint
