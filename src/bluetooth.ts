@@ -1,12 +1,10 @@
 import noble from '@abandonware/noble';
 import { Pico, picoList } from './pico.js';
-import { PicoCommand, PicoState } from './types.js';
-import { getSettings } from './pico.js';
+import { PicoState } from './types.js';
 
 // active BLE connections: maps picoId to noble Peripheral
 const connectedPeripherals = new Map<string, any>();
 const connectingPeripherals = new Set<string>();
-const writableCharacteristics = new Map<string, any>();
 
 // Scan filtering: we can connect to any device whose name contains these keywords
 const PICO_NAME_KEYWORDS = ['pico', 'smartfarm', 'mydevice', 'farm'];
@@ -115,7 +113,6 @@ noble.on('stateChange', async (state) => {
     }
   }
 });
-
 // Device discovery handler
 noble.on('discover', async (peripheral) => {
   const localName = peripheral.advertisement.localName;
@@ -171,7 +168,6 @@ noble.on('discover', async (peripheral) => {
       console.log(`[Bluetooth Connection] Pico [${picoId}] disconnected.`);
       pico.setConnected(false);
       connectedPeripherals.delete(picoId);
-      writableCharacteristics.delete(picoId);
       connectingPeripherals.delete(picoId);
 
       // Auto-restart scanning to allow re-discovery
@@ -187,19 +183,6 @@ noble.on('discover', async (peripheral) => {
 
     let subscribedOrPolled = false;
 
-    // BLE UART modules expose a writable characteristic for commands and a
-    // notify characteristic for measurements. We intentionally select by
-    // capability instead of a vendor UUID so the documented JSON protocol
-    // works with common BLE UART modules.
-    const writable = characteristics.find(characteristic =>
-      characteristic.properties.includes('write') || characteristic.properties.includes('writeWithoutResponse')
-    );
-    if (writable) writableCharacteristics.set(picoId, writable);
-
-    if (writable) {
-      await sendPicoCommand(picoId, { command: 'setMeasurementInterval', minutes: getSettings().measurementIntervalMinutes });
-      await sendPicoCommand(picoId, { command: 'measureNow' });
-    }
 
     // 1. Subscribe to Notify/Indicate characteristics
     for (const characteristic of characteristics) {
@@ -272,19 +255,3 @@ noble.on('discover', async (peripheral) => {
   }
 });
 
-/** Sends a newline-delimited JSON command to the Pico through its BLE UART characteristic. */
-export async function sendPicoCommand(picoId: string, command: PicoCommand): Promise<void> {
-  const characteristic = writableCharacteristics.get(picoId);
-  if (!characteristic || !connectedPeripherals.has(picoId)) {
-    throw new Error('Pico is not connected or does not expose a writable BLE characteristic');
-  }
-  const payload = Buffer.from(`${JSON.stringify(command)}\n`, 'utf8');
-  const withoutResponse = characteristic.properties.includes('writeWithoutResponse');
-  await characteristic.writeAsync(payload, withoutResponse);
-}
-
-export async function broadcastMeasurementInterval(minutes: number): Promise<void> {
-  const results = await Promise.allSettled([...connectedPeripherals.keys()].map(id => sendPicoCommand(id, { command: 'setMeasurementInterval', minutes })));
-  const failed = results.filter(result => result.status === 'rejected').length;
-  if (failed) console.warn(`[Bluetooth] Could not update measurement interval on ${failed} device(s).`);
-}

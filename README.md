@@ -4,23 +4,14 @@ The server receives Pico sensor readings over BLE UART, stores them locally, and
 
 ## Sensor schedule and retention
 
-- Default measurement interval: **60 minutes**
+- Fixed measurement interval: **1 minute**
 - Default retention period: **6 months**
-- Change both values in the app's Settings screen for each registered server.
-- The server sends the current interval to every connected Pico immediately after a setting change and whenever it reconnects.
+- Change the retention period in the app's Settings screen for each registered server. The measurement interval is fixed in Pico firmware.
 - Every received reading is appended to `data/smartfarm-state.json`; old readings are removed automatically according to the retention period.
 
 ## BLE UART protocol
 
-The Pico must provide a writable BLE characteristic and a Notify/Indicate characteristic. The server sends newline-delimited JSON commands:
-
-```json
-{"command":"setMeasurementInterval","minutes":60}
-```
-
-```json
-{"command":"measureNow"}
-```
+The Pico must provide a Notify/Indicate BLE characteristic for sensor readings.
 
 The Pico returns a newline-delimited sensor reading:
 
@@ -39,8 +30,8 @@ npm run start
 ## API
 
 - `GET /state` — current Pico states
-- `GET /settings` — measurement interval and retention period
-- `POST /settings` — update settings (requires `X-API-Key`)
+- `GET /settings` — fixed measurement interval and retention period
+- `POST /settings` — update retention period (requires `X-API-Key`)
 - `GET /picos/:id/readings?limit=100` — stored readings
 - `GET /notifications` — threshold and connection alerts
 - `DELETE /data` — delete all saved readings and alerts (requires `X-API-Key`; Pico registration and settings are kept)

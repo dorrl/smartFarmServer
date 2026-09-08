@@ -2,9 +2,9 @@ import express from 'express';
 import http from 'node:http';
 import { Pico, clearTelemetry, getAlerts, getReadings, getSettings, loadPersistedData, picoList, saveState, updateSettings } from './pico.js';
 import { PicoState, PicoType, Respond, ServerSettings } from './types.js';
-import { broadcastMeasurementInterval } from './bluetooth.js';
 
 const PORT = Number(process.env.PORT) || Number(process.argv[2]) || 3000;
+const PARENT = process.env.PARENT || ''
 const API_KEY = process.env.SMARTFARM_API_KEY;
 
 loadPersistedData();
@@ -38,15 +38,15 @@ function isPicoState(value: unknown): value is PicoState {
     return [state.temperature, state.moisture, state.light].every(item => typeof item === 'number' && Number.isFinite(item));
 }
 
-app.get('/', (_req, res) => res.json({ state: 200, service: 'smartfarm-server' }));
+app.get(PARENT + '/', (_req, res) => res.json({ state: 200, service: 'smartfarm-server' }));
 
-app.get('/state', (_req, res) => {
+app.get(PARENT + '/state', (_req, res) => {
     const pico: PicoType[] = Object.values(picoList).map(device => device.export());
     const response: Respond = { state: 200, pico };
     res.json(response);
 });
 
-app.get('/picos/:id/readings', (req, res) => {
+app.get(PARENT + '/picos/:id/readings', (req, res) => {
     const id = cleanId(req.params.id);
     if (!id || !picoList[id]) return res.status(404).json({ error: 'Pico not found' });
     const requestedLimit = Number(req.query.limit ?? 100);
@@ -54,7 +54,7 @@ app.get('/picos/:id/readings', (req, res) => {
     res.json({ state: 200, readings: getReadings(id, limit) });
 });
 
-app.get('/notifications', (_req, res) => res.json({ state: 200, notifications: getAlerts() }));
+app.get(PARENT + '/notifications', (_req, res) => res.json({ state: 200, notifications: getAlerts() }));
 
 // Deletes only saved readings and alerts. Registered Pico devices and measurement settings are preserved.
 app.delete('/data', requireApiKey, (_req, res) => {
@@ -62,26 +62,25 @@ app.delete('/data', requireApiKey, (_req, res) => {
     res.json({ state: 200, message: 'Saved readings and alerts were deleted.' });
 });
 
-app.get('/settings', (_req, res) => res.json({ state: 200, settings: getSettings() }));
+app.get(PARENT + '/settings', (_req, res) => res.json({ state: 200, settings: getSettings() }));
 
-app.post('/settings', requireApiKey, async (req, res) => {
+app.post(PARENT + '/settings', requireApiKey, async (req, res) => {
     const body = req.body as Partial<ServerSettings>;
     const measurementIntervalMinutes = body.measurementIntervalMinutes;
     const retentionMonths = body.retentionMonths;
-    if (typeof measurementIntervalMinutes !== 'number' || !Number.isInteger(measurementIntervalMinutes) || measurementIntervalMinutes < 1 || measurementIntervalMinutes > 1440) {
-        return res.status(400).json({ error: 'measurementIntervalMinutes must be an integer from 1 to 1440' });
+    if (measurementIntervalMinutes !== 1) {
+        return res.status(400).json({ error: 'measurementIntervalMinutes is fixed at 1' });
     }
     if (typeof retentionMonths !== 'number' || !Number.isInteger(retentionMonths) || retentionMonths < 1 || retentionMonths > 60) {
         return res.status(400).json({ error: 'retentionMonths must be an integer from 1 to 60' });
     }
     updateSettings({ measurementIntervalMinutes, retentionMonths });
-    await broadcastMeasurementInterval(measurementIntervalMinutes);
     res.json({ state: 200, settings: getSettings() });
 });
 
 // Reserved for a trusted gateway or maintenance tool. Sensor data arriving over BLE
 // updates state directly and never needs this HTTP endpoint.
-app.post('/setPico', requireApiKey, (req, res) => {
+app.post(PARENT + '/setPico', requireApiKey, (req, res) => {
     const body = req.body as Partial<PicoType>;
     const id = cleanId(body?.id);
     if (!id) return res.status(400).json({ error: 'A valid Pico ID is required' });

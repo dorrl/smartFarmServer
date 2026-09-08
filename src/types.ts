@@ -33,6 +33,4 @@ export type ServerSettings = {
     retentionMonths: number;
 };
 
-export type PicoCommand = { command: 'setMeasurementInterval'; minutes: number } | { command: 'measureNow' };
-
 export type Respond = { state: number; pico: PicoType[]; };

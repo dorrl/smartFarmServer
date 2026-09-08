@@ -6,7 +6,7 @@ import { Alert, PicoState, PicoType, Reading, ServerSettings } from './types.js'
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const dataDir = path.resolve(__dirname, '../data');
 const dataFile = path.join(dataDir, 'smartfarm-state.json');
-export const DEFAULT_SETTINGS: ServerSettings = { measurementIntervalMinutes: 60, retentionMonths: 6 };
+export const DEFAULT_SETTINGS: ServerSettings = { measurementIntervalMinutes: 1, retentionMonths: 6 };
 
 type PersistedData = { picos: PicoType[]; readings: Reading[]; alerts: Alert[]; settings?: ServerSettings; };
 let readings: Reading[] = [];
@@ -80,14 +80,16 @@ export function getReadings(picoId: string, limit = 100): Reading[] { pruneReadi
 export function getAlerts(): Alert[] { return alerts; }
 export function clearTelemetry() { readings = []; alerts = []; persist(); }
 export function getSettings(): ServerSettings { return { ...settings }; }
-export function updateSettings(next: ServerSettings) { settings = { ...next }; pruneReadings(); persist(); }
+export function updateSettings(next: ServerSettings) { settings = { measurementIntervalMinutes: 1, retentionMonths: next.retentionMonths }; pruneReadings(); persist(); }
 export function loadPersistedData() {
     if (!fs.existsSync(dataFile)) return;
     try {
         const data: PersistedData = JSON.parse(fs.readFileSync(dataFile, 'utf8'));
         readings = Array.isArray(data.readings) ? data.readings : [];
         alerts = Array.isArray(data.alerts) ? data.alerts : [];
-        if (data.settings && Number.isInteger(data.settings.measurementIntervalMinutes) && Number.isInteger(data.settings.retentionMonths)) settings = data.settings;
+        if (data.settings && Number.isInteger(data.settings.retentionMonths)) {
+            settings = { measurementIntervalMinutes: 1, retentionMonths: data.settings.retentionMonths };
+        }
         pruneReadings();
         for (const saved of data.picos ?? []) {
             const id = saved.id.toLowerCase().replace(/[^a-z0-9]/g, '');
