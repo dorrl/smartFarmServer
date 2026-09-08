@@ -2,7 +2,9 @@ import express from 'express';
 import http from 'node:http';
 import { Pico, clearTelemetry, getAlerts, getReadings, getSettings, loadPersistedData, picoList, saveState, updateSettings } from './pico.js';
 import { PicoState, PicoType, Respond, ServerSettings } from './types.js';
+import { config } from 'dotenv'
 
+config()
 const PORT = Number(process.env.PORT) || Number(process.argv[2]) || 3000;
 const PARENT = process.env.PARENT || ''
 const API_KEY = process.env.SMARTFARM_API_KEY;
