@@ -30,9 +30,9 @@ npm run start
 
 ## API
 
-- `GET /state` — current Pico states
-- `GET /settings` — fixed measurement interval and retention period
-- `POST /settings` — update retention period (requires `X-API-Key`)
+- `GET /state` — newest BLE reading for each Pico (used by app refresh; this does not return scheduled history snapshots). Each Pico includes `receivedAt`, the time its sensor value was last received.
+- `GET /settings` — fixed measurement interval, history storage/app polling interval, and retention period
+- `POST /settings` — update history storage/app polling interval and retention period (requires `X-API-Key`)
 - `GET /picos/:id/readings?limit=100` — stored readings
 - `GET /notifications` — threshold and connection alerts
 - `DELETE /data` — delete all saved readings and alerts (requires `X-API-Key`; Pico registration and settings are kept)

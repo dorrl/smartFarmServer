@@ -44,8 +44,10 @@ function isPicoState(value: unknown): value is PicoState {
 app.get(PARENT + '/', (_req, res) => res.json({ state: 200, service: 'smartfarm-server' }));
 
 app.get(PARENT + '/state', (_req, res) => {
+    // This endpoint is used by app refresh. Do not read `readings` here: that
+    // collection contains only scheduled history snapshots.
     const pico: PicoType[] = Object.values(picoList).map(device => device.export());
-    const response: Respond = { state: 200, pico };
+    const response: Respond = { state: 200, source: 'latest-received', servedAt: new Date().toISOString(), pico };
     res.json(response);
 });
 

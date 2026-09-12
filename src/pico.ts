@@ -58,14 +58,22 @@ export class Pico {
     connected: boolean;
     state: PicoState;
     updatedAt: string;
+    receivedAt: string;
     constructor(pico: PicoType) {
         if (!validState(pico.state)) throw new Error('Invalid sensor state');
-        this.name = pico.name; this.id = pico.id; this.connected = pico.connected; this.state = pico.state; this.updatedAt = pico.updatedAt ?? new Date().toISOString();
+        this.name = pico.name; this.id = pico.id; this.connected = pico.connected; this.state = pico.state;
+        this.updatedAt = pico.updatedAt ?? new Date().toISOString();
+        // Older saved files do not have receivedAt, so retain their known timestamp.
+        this.receivedAt = pico.receivedAt ?? this.updatedAt;
     }
-    export(): PicoType { return { name: this.name, id: this.id, connected: this.connected, state: this.state, updatedAt: this.updatedAt }; }
+    export(): PicoType {
+        return { name: this.name, id: this.id, connected: this.connected, state: this.state, updatedAt: this.updatedAt, receivedAt: this.receivedAt };
+    }
     setState(state: PicoState) {
         if (!validState(state)) throw new Error('Sensor values are outside the allowed range');
-        this.state = state; this.updatedAt = new Date().toISOString();
+        this.state = state;
+        this.receivedAt = new Date().toISOString();
+        this.updatedAt = this.receivedAt;
         addAlert(this); persist();
     }
     setConnected(connected: boolean) {
