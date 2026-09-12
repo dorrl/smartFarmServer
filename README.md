@@ -4,14 +4,15 @@ The server receives Pico sensor readings over BLE UART, stores them locally, and
 
 ## Sensor schedule and retention
 
-- Fixed measurement interval: **1 minute**
+- Fixed Pico measurement and BLE transmission interval: **1 minute**
+- Default server storage and app refresh interval: **5 minutes**
 - Default retention period: **6 months**
-- Change the retention period in the app's Settings screen for each registered server. The measurement interval is fixed in Pico firmware.
-- Every received reading is appended to `data/smartfarm-state.json`; old readings are removed automatically according to the retention period.
+- Change the server storage and app refresh interval, plus the retention period, in the app's Settings screen for each registered server. The Pico measurement interval is fixed in firmware.
+- The server holds the newest BLE reading in memory, then saves a snapshot of every connected Pico at the configured storage interval. Old readings are removed automatically according to the retention period.
 
 ## BLE UART protocol
 
-The Pico must provide a Notify/Indicate BLE characteristic for sensor readings.
+The Pico W advertises the Nordic UART BLE service. The server subscribes to its Notify characteristic for newline-delimited JSON sensor readings.
 
 The Pico returns a newline-delimited sensor reading:
 

@@ -6,12 +6,13 @@ import { Alert, PicoState, PicoType, Reading, ServerSettings } from './types.js'
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const dataDir = path.resolve(__dirname, '../data');
 const dataFile = path.join(dataDir, 'smartfarm-state.json');
-export const DEFAULT_SETTINGS: ServerSettings = { measurementIntervalMinutes: 1, retentionMonths: 6 };
+export const DEFAULT_SETTINGS: ServerSettings = { measurementIntervalMinutes: 1, syncIntervalMinutes: 5, retentionMonths: 6 };
 
 type PersistedData = { picos: PicoType[]; readings: Reading[]; alerts: Alert[]; settings?: ServerSettings; };
 let readings: Reading[] = [];
 let alerts: Alert[] = [];
 let settings: ServerSettings = { ...DEFAULT_SETTINGS };
+let storageTimer: ReturnType<typeof setInterval> | undefined;
 
 function validState(state: PicoState): boolean {
     return Number.isFinite(state.temperature) && Number.isFinite(state.moisture) && Number.isFinite(state.light)
@@ -65,7 +66,6 @@ export class Pico {
     setState(state: PicoState) {
         if (!validState(state)) throw new Error('Sensor values are outside the allowed range');
         this.state = state; this.updatedAt = new Date().toISOString();
-        readings.unshift({ picoId: this.id, ...state, recordedAt: this.updatedAt });
         addAlert(this); persist();
     }
     setConnected(connected: boolean) {
@@ -80,7 +80,27 @@ export function getReadings(picoId: string, limit = 100): Reading[] { pruneReadi
 export function getAlerts(): Alert[] { return alerts; }
 export function clearTelemetry() { readings = []; alerts = []; persist(); }
 export function getSettings(): ServerSettings { return { ...settings }; }
-export function updateSettings(next: ServerSettings) { settings = { measurementIntervalMinutes: 1, retentionMonths: next.retentionMonths }; pruneReadings(); persist(); }
+export function saveLatestReadings() {
+    const recordedAt = new Date().toISOString();
+    for (const pico of Object.values(picoList)) {
+        if (pico.connected) readings.unshift({ picoId: pico.id, ...pico.state, recordedAt });
+    }
+    persist();
+}
+
+function restartStorageScheduler() {
+    if (storageTimer) clearInterval(storageTimer);
+    storageTimer = setInterval(saveLatestReadings, settings.syncIntervalMinutes * 60_000);
+}
+
+export function startStorageScheduler() { restartStorageScheduler(); }
+
+export function updateSettings(next: ServerSettings) {
+    settings = { measurementIntervalMinutes: 1, syncIntervalMinutes: next.syncIntervalMinutes, retentionMonths: next.retentionMonths };
+    restartStorageScheduler();
+    pruneReadings();
+    persist();
+}
 export function loadPersistedData() {
     if (!fs.existsSync(dataFile)) return;
     try {
@@ -88,7 +108,11 @@ export function loadPersistedData() {
         readings = Array.isArray(data.readings) ? data.readings : [];
         alerts = Array.isArray(data.alerts) ? data.alerts : [];
         if (data.settings && Number.isInteger(data.settings.retentionMonths)) {
-            settings = { measurementIntervalMinutes: 1, retentionMonths: data.settings.retentionMonths };
+            settings = {
+                measurementIntervalMinutes: 1,
+                syncIntervalMinutes: Number.isInteger(data.settings.syncIntervalMinutes) ? data.settings.syncIntervalMinutes : DEFAULT_SETTINGS.syncIntervalMinutes,
+                retentionMonths: data.settings.retentionMonths,
+            };
         }
         pruneReadings();
         for (const saved of data.picos ?? []) {

@@ -1,6 +1,6 @@
 import express from 'express';
 import http from 'node:http';
-import { Pico, clearTelemetry, getAlerts, getReadings, getSettings, loadPersistedData, picoList, saveState, updateSettings } from './pico.js';
+import { Pico, clearTelemetry, getAlerts, getReadings, getSettings, loadPersistedData, picoList, saveState, startStorageScheduler, updateSettings } from './pico.js';
 import { PicoState, PicoType, Respond, ServerSettings } from './types.js';
 import { config } from 'dotenv'
 
@@ -10,6 +10,7 @@ const PARENT = process.env.PARENT || ''
 const API_KEY = process.env.SMARTFARM_API_KEY;
 
 loadPersistedData();
+startStorageScheduler();
 
 const app = express();
 app.use(express.json({ limit: '16kb' }));
@@ -59,7 +60,7 @@ app.get(PARENT + '/picos/:id/readings', (req, res) => {
 app.get(PARENT + '/notifications', (_req, res) => res.json({ state: 200, notifications: getAlerts() }));
 
 // Deletes only saved readings and alerts. Registered Pico devices and measurement settings are preserved.
-app.delete('/data', requireApiKey, (_req, res) => {
+app.delete(PARENT + '/data', requireApiKey, (_req, res) => {
     clearTelemetry();
     res.json({ state: 200, message: 'Saved readings and alerts were deleted.' });
 });
@@ -69,14 +70,18 @@ app.get(PARENT + '/settings', (_req, res) => res.json({ state: 200, settings: ge
 app.post(PARENT + '/settings', requireApiKey, async (req, res) => {
     const body = req.body as Partial<ServerSettings>;
     const measurementIntervalMinutes = body.measurementIntervalMinutes;
+    const syncIntervalMinutes = body.syncIntervalMinutes;
     const retentionMonths = body.retentionMonths;
     if (measurementIntervalMinutes !== 1) {
         return res.status(400).json({ error: 'measurementIntervalMinutes is fixed at 1' });
     }
+    if (typeof syncIntervalMinutes !== 'number' || !Number.isInteger(syncIntervalMinutes) || syncIntervalMinutes < 1 || syncIntervalMinutes > 1440) {
+        return res.status(400).json({ error: 'syncIntervalMinutes must be an integer from 1 to 1440' });
+    }
     if (typeof retentionMonths !== 'number' || !Number.isInteger(retentionMonths) || retentionMonths < 1 || retentionMonths > 60) {
         return res.status(400).json({ error: 'retentionMonths must be an integer from 1 to 60' });
     }
-    updateSettings({ measurementIntervalMinutes, retentionMonths });
+    updateSettings({ measurementIntervalMinutes, syncIntervalMinutes, retentionMonths });
     res.json({ state: 200, settings: getSettings() });
 });
 

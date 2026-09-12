@@ -30,6 +30,7 @@ export type Alert = {
 
 export type ServerSettings = {
     measurementIntervalMinutes: number;
+    syncIntervalMinutes: number;
     retentionMonths: number;
 };
 
