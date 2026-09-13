@@ -187,18 +187,34 @@ noble.on('discover', async (peripheral) => {
     // 1. Subscribe to Notify/Indicate characteristics
     for (const characteristic of characteristics) {
       const props = characteristic.properties;
+      console.log(`[Bluetooth Services] Characteristic [${characteristic.uuid}] properties: ${props.join(', ')}`);
       if (props.includes('notify') || props.includes('indicate')) {
         console.log(`[Bluetooth Subscription] Subscribing to characteristic [${characteristic.uuid}] on Pico [${picoId}]`);
 
+        let pendingData = '';
         characteristic.on('data', (dataBuffer: Buffer) => {
-          const rawString = dataBuffer.toString('utf-8').trim();
-          console.log(`[Bluetooth Data] Pico [${picoId}] Notify data (RAW): ${rawString}`);
+          const chunk = dataBuffer.toString('utf-8');
+          console.log(`[Bluetooth Data] Pico [${picoId}] Notify chunk (HEX): ${dataBuffer.toString('hex')}`);
+          pendingData += chunk;
 
-          const updatedState = parsePicoState(dataBuffer, pico.state);
-          if (updatedState) {
-            pico.setState(updatedState);
-            console.log(`[Bluetooth Data] Updated state for Pico [${picoId}]:`, pico.state);
+          // BLE notifications may split one JSON line across multiple packets.
+          const messages = pendingData.split(/\r?\n/);
+          pendingData = messages.pop() ?? '';
+          for (const message of messages) {
+            const data = Buffer.from(message.trim(), 'utf-8');
+            if (!data.length) continue;
+            console.log(`[Bluetooth Data] Pico [${picoId}] Notify data (RAW): ${message}`);
+            const updatedState = parsePicoState(data, pico.state);
+            if (updatedState) {
+              pico.setState(updatedState);
+              console.log(`[Bluetooth Data] Updated state for Pico [${picoId}]:`, pico.state);
+            } else {
+              console.warn(`[Bluetooth Data] Could not parse Pico [${picoId}] notification: ${message}`);
+            }
           }
+        });
+        characteristic.on('error', (error: Error) => {
+          console.error(`[Bluetooth Subscription] Error on characteristic [${characteristic.uuid}] for Pico [${picoId}]:`, error);
         });
 
         await characteristic.subscribeAsync();
@@ -207,37 +223,39 @@ noble.on('discover', async (peripheral) => {
     }
 
     // 2. If no notification characteristics are available, fall back to polling readable characteristics
-    if (!subscribedOrPolled) {
-      const readableChars = characteristics.filter(c => c.properties.includes('read'));
-      if (readableChars.length > 0) {
-        console.log(`[Bluetooth Polling] No notify characteristics. Starting 5s polling on ${readableChars.length} readable characteristics for Pico [${picoId}]...`);
+    // Some BLE stacks report notify support and accept the CCCD subscription, but
+    // still do not deliver notifications reliably. Poll readable characteristics
+    // as a fallback in that case as well.
+    const readableChars = characteristics.filter(c => c.properties.includes('read') && c.properties.includes('notify'));
+    if (readableChars.length > 0) {
+      const lastPolledValues = new Map<string, string>();
+      const pollInterval = setInterval(async () => {
+        if (!connectedPeripherals.has(picoId)) {
+          clearInterval(pollInterval);
+          return;
+        }
 
-        const pollInterval = setInterval(async () => {
-          // If device is disconnected, cancel polling
-          if (!connectedPeripherals.has(picoId)) {
-            clearInterval(pollInterval);
-            return;
-          }
+        try {
+          for (const char of readableChars) {
+            const dataBuffer = await char.readAsync();
+            const rawValue = dataBuffer.toString('utf-8');
+            if (lastPolledValues.get(char.uuid) === rawValue) continue;
+            lastPolledValues.set(char.uuid, rawValue);
 
-          try {
-            for (const char of readableChars) {
-              const dataBuffer = await char.readAsync();
-              const rawString = dataBuffer.toString('utf-8').trim();
-              console.log(`[Bluetooth Data] Pico [${picoId}] Poll data (RAW): ${rawString}`);
-
-              const updatedState = parsePicoState(dataBuffer, pico.state);
-              if (updatedState) {
-                pico.setState(updatedState);
-                console.log(`[Bluetooth Data] Updated state (polled) for Pico [${picoId}]:`, pico.state);
-              }
+            const rawString = rawValue.trim();
+            console.log(`[Bluetooth Data] Pico [${picoId}] Poll data (RAW): ${rawString}`);
+            const updatedState = parsePicoState(dataBuffer, pico.state);
+            if (updatedState) {
+              pico.setState(updatedState);
+              console.log(`[Bluetooth Data] Updated state (polled) for Pico [${picoId}]:`, pico.state);
             }
-          } catch (e: any) {
-            console.error(`[Bluetooth Polling] Error polling Pico [${picoId}]:`, e.message || e);
           }
-        }, 5000);
+        } catch (e: any) {
+          console.error(`[Bluetooth Polling] Error polling Pico [${picoId}] characteristic [${readableChars.map(char => char.uuid).join(', ')}]:`, e.message || e);
+        }
+      }, subscribedOrPolled ? 5000 : 1000);
 
-        subscribedOrPolled = true;
-      }
+      subscribedOrPolled = true;
     }
 
     if (!subscribedOrPolled) {
