@@ -95,9 +95,7 @@ function parsePicoState(data: Buffer, currentState: PicoState): PicoState | null
 
 // Noble state change handler
 noble.on('stateChange', async (state) => {
-  console.log(`[Bluetooth State] State changed to: ${state}`);
   if (state === 'poweredOn') {
-    console.log('[Bluetooth Scanner] Starting scan for BLE devices...');
     try {
       // Start scanning. Set allowDuplicates to true so we can rediscover devices or scan continuously
       await noble.startScanningAsync([], true);
@@ -105,7 +103,6 @@ noble.on('stateChange', async (state) => {
       console.error('[Bluetooth Scanner] Error starting scan:', err);
     }
   } else {
-    console.log('[Bluetooth Scanner] State is not poweredOn, stopping scan...');
     try {
       await noble.stopScanningAsync();
     } catch (err) {
@@ -134,14 +131,10 @@ noble.on('discover', async (peripheral) => {
     return;
   }
 
-  console.log(`[Bluetooth Discovery] Found Pico device [${localName}] with ID: [${picoId}]`);
-
   // Start connection attempt
   connectingPeripherals.add(picoId);
   try {
-    console.log(`[Bluetooth Connection] Connecting to Pico [${picoId}]...`);
     await peripheral.connectAsync();
-    console.log(`[Bluetooth Connection] Successfully connected to Pico [${picoId}]`);
 
     // Setup Pico instance in picoList
     let pico = picoList[picoId];
@@ -165,7 +158,6 @@ noble.on('discover', async (peripheral) => {
 
     // Register disconnect listener
     peripheral.once('disconnect', () => {
-      console.log(`[Bluetooth Connection] Pico [${picoId}] disconnected.`);
       pico.setConnected(false);
       connectedPeripherals.delete(picoId);
       connectingPeripherals.delete(picoId);
@@ -177,9 +169,7 @@ noble.on('discover', async (peripheral) => {
     });
 
     // Discover services and characteristics
-    console.log(`[Bluetooth Services] Discovering services and characteristics for Pico [${picoId}]...`);
-    const { services, characteristics } = await peripheral.discoverAllServicesAndCharacteristicsAsync();
-    console.log(`[Bluetooth Services] Discovered ${characteristics.length} characteristics for Pico [${picoId}]`);
+    const { characteristics } = await peripheral.discoverAllServicesAndCharacteristicsAsync();
 
     let subscribedOrPolled = false;
 
@@ -187,14 +177,10 @@ noble.on('discover', async (peripheral) => {
     // 1. Subscribe to Notify/Indicate characteristics
     for (const characteristic of characteristics) {
       const props = characteristic.properties;
-      console.log(`[Bluetooth Services] Characteristic [${characteristic.uuid}] properties: ${props.join(', ')}`);
       if (props.includes('notify') || props.includes('indicate')) {
-        console.log(`[Bluetooth Subscription] Subscribing to characteristic [${characteristic.uuid}] on Pico [${picoId}]`);
-
         let pendingData = '';
         characteristic.on('data', (dataBuffer: Buffer) => {
           const chunk = dataBuffer.toString('utf-8');
-          console.log(`[Bluetooth Data] Pico [${picoId}] Notify chunk (HEX): ${dataBuffer.toString('hex')}`);
           pendingData += chunk;
 
           // BLE notifications may split one JSON line across multiple packets.
@@ -203,11 +189,9 @@ noble.on('discover', async (peripheral) => {
           for (const message of messages) {
             const data = Buffer.from(message.trim(), 'utf-8');
             if (!data.length) continue;
-            console.log(`[Bluetooth Data] Pico [${picoId}] Notify data (RAW): ${message}`);
             const updatedState = parsePicoState(data, pico.state);
             if (updatedState) {
               pico.setState(updatedState);
-              console.log(`[Bluetooth Data] Updated state for Pico [${picoId}]:`, pico.state);
             } else {
               console.warn(`[Bluetooth Data] Could not parse Pico [${picoId}] notification: ${message}`);
             }
@@ -242,12 +226,9 @@ noble.on('discover', async (peripheral) => {
             if (lastPolledValues.get(char.uuid) === rawValue) continue;
             lastPolledValues.set(char.uuid, rawValue);
 
-            const rawString = rawValue.trim();
-            console.log(`[Bluetooth Data] Pico [${picoId}] Poll data (RAW): ${rawString}`);
             const updatedState = parsePicoState(dataBuffer, pico.state);
             if (updatedState) {
               pico.setState(updatedState);
-              console.log(`[Bluetooth Data] Updated state (polled) for Pico [${picoId}]:`, pico.state);
             }
           }
         } catch (e: any) {
