@@ -183,18 +183,23 @@ noble.on('discover', async (peripheral) => {
           const chunk = dataBuffer.toString('utf-8');
           pendingData += chunk;
 
-          // BLE notifications may split one JSON line across multiple packets.
-          const messages = pendingData.split(/\r?\n/);
-          pendingData = messages.pop() ?? '';
-          for (const message of messages) {
-            const data = Buffer.from(message.trim(), 'utf-8');
-            if (!data.length) continue;
-            const updatedState = parsePicoState(data, pico.state);
-            if (updatedState) {
-              pico.setState(updatedState);
-            } else {
-              console.warn(`[Bluetooth Data] Could not parse Pico [${picoId}] notification: ${message}`);
+          // A notification can contain only part of a JSON line. Recover complete
+          // object frames from the byte stream instead of parsing each packet.
+          while (true) {
+            const start = pendingData.indexOf('{');
+            if (start < 0) {
+              pendingData = '';
+              break;
             }
+            if (start > 0) pendingData = pendingData.slice(start);
+
+            const end = pendingData.indexOf('}');
+            if (end < 0) break;
+
+            const message = pendingData.slice(0, end + 1);
+            pendingData = pendingData.slice(end + 1).replace(/^\r?\n/, '');
+            const updatedState = parsePicoState(Buffer.from(message, 'utf-8'), pico.state);
+            if (updatedState) pico.setState(updatedState);
           }
         });
         characteristic.on('error', (error: Error) => {
