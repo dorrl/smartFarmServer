@@ -16,7 +16,7 @@ let storageTimer: ReturnType<typeof setInterval> | undefined;
 
 function validState(state: PicoState): boolean {
     return Number.isFinite(state.temperature) && Number.isFinite(state.moisture) && Number.isFinite(state.light)
-        && state.temperature >= -50 && state.temperature <= 100 && state.moisture >= 0 && state.moisture <= 100 && state.light >= 0 && state.light <= 200_000;
+        && state.temperature >= -50 && state.temperature <= 100 && state.moisture >= 0 && state.moisture <= 100 && state.light >= -2 && state.light <= 200_000;
 }
 
 function retentionCutoff() {
