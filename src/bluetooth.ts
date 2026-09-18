@@ -93,6 +93,18 @@ function parsePicoState(data: Buffer, currentState: PicoState): PicoState | null
   return null;
 }
 
+function applyPicoState(pico: Pico, data: Buffer, characteristicUuid: string, source: 'notification' | 'polling') {
+  const updatedState = parsePicoState(data, pico.state);
+  if (!updatedState) return;
+
+  try {
+    pico.setState(updatedState);
+  } catch (error) {
+    const rawValue = data.toString('utf-8').trim();
+    console.error(`[Bluetooth ${source}] Ignoring invalid sensor payload from Pico [${pico.id}] characteristic [${characteristicUuid}] value [${rawValue}]`, error instanceof Error ? error.message : error);
+  }
+}
+
 // Noble state change handler
 noble.on('stateChange', async (state) => {
   if (state === 'poweredOn') {
@@ -198,8 +210,7 @@ noble.on('discover', async (peripheral) => {
 
             const message = pendingData.slice(0, end + 1);
             pendingData = pendingData.slice(end + 1).replace(/^\r?\n/, '');
-            const updatedState = parsePicoState(Buffer.from(message, 'utf-8'), pico.state);
-            if (updatedState) pico.setState(updatedState);
+            applyPicoState(pico, Buffer.from(message, 'utf-8'), characteristic.uuid, 'notification');
           }
         });
         characteristic.on('error', (error: Error) => {
@@ -231,10 +242,7 @@ noble.on('discover', async (peripheral) => {
             if (lastPolledValues.get(char.uuid) === rawValue) continue;
             lastPolledValues.set(char.uuid, rawValue);
 
-            const updatedState = parsePicoState(dataBuffer, pico.state);
-            if (updatedState) {
-              pico.setState(updatedState);
-            }
+            applyPicoState(pico, dataBuffer, char.uuid, 'polling');
           }
         } catch (e: any) {
           console.error(`[Bluetooth Polling] Error polling Pico [${picoId}] characteristic [${readableChars.map(char => char.uuid).join(', ')}]:`, e.message || e);
