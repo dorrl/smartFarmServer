@@ -222,11 +222,14 @@ noble.on('discover', async (peripheral) => {
       }
     }
 
-    // 2. If no notification characteristics are available, fall back to polling readable characteristics
-    // Some BLE stacks report notify support and accept the CCCD subscription, but
-    // still do not deliver notifications reliably. Poll readable characteristics
-    // as a fallback in that case as well.
-    const readableChars = characteristics.filter(c => c.properties.includes('read') && c.properties.includes('notify'));
+    // 2. If no notification characteristics are available, fall back to polling
+    // readable-only characteristics. Reading a notify characteristic as well as
+    // subscribing to it can return partial UART frames and race the BLE stack.
+    const readableChars = characteristics.filter(c =>
+      c.properties.includes('read') &&
+      !c.properties.includes('notify') &&
+      !c.properties.includes('indicate')
+    );
     if (readableChars.length > 0) {
       const lastPolledValues = new Map<string, string>();
       const pollInterval = setInterval(async () => {
