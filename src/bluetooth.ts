@@ -5,6 +5,7 @@ import { PicoState } from './types.js';
 // active BLE connections: maps picoId to noble Peripheral
 const connectedPeripherals = new Map<string, any>();
 const connectingPeripherals = new Set<string>();
+const pollingTimers = new Map<string, ReturnType<typeof setInterval>>();
 
 // Scan filtering: we can connect to any device whose name contains these keywords
 const PICO_NAME_KEYWORDS = ['pico', 'smartfarm', 'mydevice', 'farm'];
@@ -115,6 +116,10 @@ noble.on('stateChange', async (state) => {
       console.error('[Bluetooth Scanner] Error starting scan:', err);
     }
   } else {
+    for (const timer of pollingTimers.values()) clearInterval(timer);
+    pollingTimers.clear();
+    connectedPeripherals.clear();
+    connectingPeripherals.clear();
     try {
       await noble.stopScanningAsync();
     } catch (err) {
@@ -146,6 +151,8 @@ noble.on('discover', async (peripheral) => {
   // Start connection attempt
   connectingPeripherals.add(picoId);
   try {
+    // Scanning and connecting concurrently is unreliable on some adapters.
+    await noble.stopScanningAsync().catch(() => undefined);
     await peripheral.connectAsync();
 
     // Setup Pico instance in picoList
@@ -173,6 +180,11 @@ noble.on('discover', async (peripheral) => {
       pico.setConnected(false);
       connectedPeripherals.delete(picoId);
       connectingPeripherals.delete(picoId);
+      const timer = pollingTimers.get(picoId);
+      if (timer) {
+        clearInterval(timer);
+        pollingTimers.delete(picoId);
+      }
 
       // Auto-restart scanning to allow re-discovery
       noble.startScanningAsync([], true).catch(err => {
@@ -251,6 +263,7 @@ noble.on('discover', async (peripheral) => {
           console.error(`[Bluetooth Polling] Error polling Pico [${picoId}] characteristic [${readableChars.map(char => char.uuid).join(', ')}]:`, e.message || e);
         }
       }, subscribedOrPolled ? 5000 : 1000);
+      pollingTimers.set(picoId, pollInterval);
 
       subscribedOrPolled = true;
     }
