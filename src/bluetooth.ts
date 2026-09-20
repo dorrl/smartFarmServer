@@ -369,6 +369,11 @@ async function processConnectionQueue() {
 noble.on('discover', (peripheral) => {
   const localName = peripheral.advertisement.localName;
   const rawId = peripheral.address || peripheral.id;
+
+  console.log(
+    `[Bluetooth Discover] name=${localName ?? '(no name)'} id=${rawId ?? '(no id)'}`
+  );
+
   if (!rawId) return;
 
   const picoId = rawId.toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -383,7 +388,14 @@ noble.on('discover', (peripheral) => {
       localName.toLowerCase().includes(keyword)
     );
 
-  if (!isPico) return;
+  if (!isPico) {
+    console.log(
+      `[Bluetooth Discover] Ignored device: name=${localName ?? '(no name)'}`
+    );
+    return;
+  }
+
+  console.log(`[Bluetooth] Queuing Pico: ${picoId}`);
 
   // Queue the device instead of starting another connection flow from inside
   // the discover event. This prevents concurrent stopScan/connect/startScan
