@@ -179,11 +179,8 @@ async function processConnectionQueue() {
       try {
         // Only one connection attempt runs at a time. This is much safer for
         // adapters that do not behave well when scanning and connecting overlap.
-        console.log(`[Bluetooth] Connecting: ${picoId} (${localName ?? '(no name)'})`);
         await stopScanning();
-        console.log(`[Bluetooth] Scan stopped for connection: ${picoId}`);
         await peripheral.connectAsync();
-        console.log(`[Bluetooth] Connected: ${picoId}`);
 
         let pico = picoList[picoId];
         if (!pico) {
@@ -209,16 +206,11 @@ async function processConnectionQueue() {
           clearPicoPolling(picoId);
 
           // Allow this device to be discovered again after disconnect.
-          console.log(`[Bluetooth] Disconnected: ${picoId}`);
           void startScanning();
         });
 
-        console.log(`[Bluetooth] Discovering services: ${picoId}`);
         const { characteristics } =
           await peripheral.discoverAllServicesAndCharacteristicsAsync();
-        console.log(
-          `[Bluetooth] Services discovered: ${picoId}, characteristics=${characteristics.length}`
-        );
 
         let hasSubscription = false;
 
@@ -293,14 +285,8 @@ async function processConnectionQueue() {
             );
           });
 
-          console.log(
-            `[Bluetooth] Subscribing: Pico=${picoId} characteristic=${characteristic.uuid}`
-          );
           await characteristic.subscribeAsync();
           hasSubscription = true;
-          console.log(
-            `[Bluetooth] Subscribed: Pico=${picoId} characteristic=${characteristic.uuid}`
-          );
         }
 
         // 2. Poll readable-only characteristics when Notify/Indicate is absent.
@@ -354,7 +340,6 @@ async function processConnectionQueue() {
           );
         }
 
-        console.log(`[Bluetooth] Connection flow complete: ${picoId}`);
       } catch (error) {
         console.error(
           `[Bluetooth Connection] Error during connection flow for Pico [${picoId}]:`,
@@ -367,8 +352,6 @@ async function processConnectionQueue() {
 
         const pico = picoList[picoId];
         if (pico) pico.setConnected(false);
-
-        console.error(`[Bluetooth] Connection flow failed: ${picoId}`);
 
         try {
           await peripheral.disconnectAsync();
@@ -391,10 +374,6 @@ noble.on('discover', (peripheral) => {
   const localName = peripheral.advertisement.localName;
   const rawId = peripheral.address || peripheral.id;
 
-  console.log(
-    `[Bluetooth Discover] name=${localName ?? '(no name)'} id=${rawId ?? '(no id)'}`
-  );
-
   if (!rawId) return;
 
   const picoId = rawId.toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -409,14 +388,7 @@ noble.on('discover', (peripheral) => {
       localName.toLowerCase().includes(keyword)
     );
 
-  if (!isPico) {
-    console.log(
-      `[Bluetooth Discover] Ignored device: name=${localName ?? '(no name)'}`
-    );
-    return;
-  }
-
-  console.log(`[Bluetooth] Queuing Pico: ${picoId}`);
+  if (!isPico) return;
 
   // Queue the device instead of starting another connection flow from inside
   // the discover event. This prevents concurrent stopScan/connect/startScan
