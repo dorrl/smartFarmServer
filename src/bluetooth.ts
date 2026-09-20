@@ -290,7 +290,7 @@ async function processConnectionQueue() {
         }
 
         // 2. Poll readable-only characteristics when Notify/Indicate is absent.
-        const readableChars = characteristics.filter(c =>
+        const readableChars = characteristics.filter((c: any) =>
           c.properties.includes('read') &&
           !c.properties.includes('notify') &&
           !c.properties.includes('indicate')
@@ -323,7 +323,7 @@ async function processConnectionQueue() {
               }
             } catch (error: any) {
               console.error(
-                `[Bluetooth Polling] Error polling Pico [${picoId}] characteristic [${readableChars.map(char => char.uuid).join(', ')}]:`,
+                `[Bluetooth Polling] Error polling Pico [${picoId}] characteristic [${readableChars.map((char: any) => char.uuid).join(', ')}]:`,
                 error?.message || error
               );
             } finally {
