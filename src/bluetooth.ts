@@ -177,10 +177,11 @@ async function processConnectionQueue() {
       }
 
       try {
-        // Only one connection attempt runs at a time. This is much safer for
-        // adapters that do not behave well when scanning and connecting overlap.
+        console.log(`[BLE] Connecting: ${picoId} (${localName ?? '(no name)'})`);
         await stopScanning();
+        console.log(`[BLE] Scan stopped: ${picoId}`);
         await peripheral.connectAsync();
+        console.log(`[BLE] Connected: ${picoId}`);
 
         let pico = picoList[picoId];
         if (!pico) {
@@ -200,6 +201,7 @@ async function processConnectionQueue() {
         connectingPeripherals.delete(picoId);
 
         peripheral.once('disconnect', () => {
+          console.log(`[BLE] Disconnected: ${picoId}`);
           pico!.setConnected(false);
           connectedPeripherals.delete(picoId);
           connectingPeripherals.delete(picoId);
@@ -209,8 +211,10 @@ async function processConnectionQueue() {
           void startScanning();
         });
 
+        console.log(`[BLE] Discovering services: ${picoId}`);
         const { characteristics } =
           await peripheral.discoverAllServicesAndCharacteristicsAsync();
+        console.log(`[BLE] Services discovered: ${picoId} characteristics=${characteristics.length}`);
 
         let hasSubscription = false;
 
@@ -285,7 +289,9 @@ async function processConnectionQueue() {
             );
           });
 
+          console.log(`[BLE] Subscribing: Pico=${picoId} characteristic=${characteristic.uuid}`);
           await characteristic.subscribeAsync();
+          console.log(`[BLE] Subscribed: Pico=${picoId} characteristic=${characteristic.uuid}`);
           hasSubscription = true;
         }
 
@@ -334,6 +340,8 @@ async function processConnectionQueue() {
           pollingTimers.set(picoId, pollInterval);
         }
 
+        console.log(`[BLE] Connection complete: ${picoId}`);
+
         if (!hasSubscription && readableChars.length === 0) {
           console.warn(
             `[Bluetooth Warning] Pico [${picoId}] has no Notify, Indicate, or Read characteristics!`
@@ -345,6 +353,8 @@ async function processConnectionQueue() {
           `[Bluetooth Connection] Error during connection flow for Pico [${picoId}]:`,
           error
         );
+
+        console.error(`[BLE] Connection failed: ${picoId}`);
 
         connectedPeripherals.delete(picoId);
         connectingPeripherals.delete(picoId);
@@ -390,10 +400,13 @@ noble.on('discover', (peripheral) => {
 
   if (!isPico) return;
 
+  console.log(`[BLE] Pico discovered: ${picoId} (${localName})`);
+
   // Queue the device instead of starting another connection flow from inside
   // the discover event. This prevents concurrent stopScan/connect/startScan
   // races when several Picos advertise at nearly the same time.
   connectingPeripherals.add(picoId);
+  console.log(`[BLE] Pico queued: ${picoId}`);
   connectionQueue.push({ peripheral, picoId, localName });
   void processConnectionQueue();
 });
