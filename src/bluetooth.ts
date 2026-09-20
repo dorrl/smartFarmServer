@@ -7,6 +7,8 @@ const connectedPeripherals = new Map<string, any>();
 const connectingPeripherals = new Set<string>();
 const pollingTimers = new Map<string, ReturnType<typeof setInterval>>();
 let scanning = false;
+let connectionQueueRunning = false;
+const connectionQueue: Array<{ peripheral: any; picoId: string; localName?: string }> = [];
 
 async function startScanning() {
   if (scanning) return;
@@ -37,7 +39,7 @@ const PICO_NAME_KEYWORDS = ['pico', 'smartfarm', 'mydevice', 'farm'];
  * Supports:
  * 1. JSON string: {"temperature":25,"moisture":45,"light":120}
  * 2. Comma/space-separated values: 25.5,45,120 (temp,moist,light)
- * 3. Key-value string: temp:23.4, moist:50, light:120 (single updates are merged with current state)
+ * 3. Key-value string: temp:23.4, moist:50, light:120
  * 4. Binary float: 12 bytes = 3 floats (LE)
  * 5. Binary int16: 6 bytes = 3 int16 (LE)
  */
@@ -53,11 +55,11 @@ function parsePicoState(data: Buffer, currentState: PicoState): PicoState | null
     if (typeof parsed.moisture === 'number') { result.moisture = parsed.moisture; changed = true; }
     if (typeof parsed.light === 'number') { result.light = parsed.light; changed = true; }
     if (changed) return result;
-  } catch (e) {
+  } catch (_) {
     // Ignore JSON parse errors
   }
 
-  // 2. Try parsing key-value string (e.g. temp:23.4, moist:50, light:120 or t=23.4, m=50, l=120)
+  // 2. Try parsing key-value string
   const result = { ...currentState };
   let matchFound = false;
   const kvRegex = /(temp(?:erature)?|moist(?:ure)?|light|t|m|l)\s*[:=]\s*(-?\d+(?:\.\d+)?)/gi;
@@ -65,7 +67,7 @@ function parsePicoState(data: Buffer, currentState: PicoState): PicoState | null
   while ((match = kvRegex.exec(str)) !== null) {
     const key = match[1].toLowerCase();
     const val = parseFloat(match[2]);
-    if (!isNaN(val)) {
+    if (!Number.isNaN(val)) {
       if (key.startsWith('t')) {
         result.temperature = val;
         matchFound = true;
@@ -78,9 +80,7 @@ function parsePicoState(data: Buffer, currentState: PicoState): PicoState | null
       }
     }
   }
-  if (matchFound) {
-    return result;
-  }
+  if (matchFound) return result;
 
   // 3. Try parsing comma- or space-separated numbers
   const parts = str.split(/[\s,]+/);
@@ -88,35 +88,42 @@ function parsePicoState(data: Buffer, currentState: PicoState): PicoState | null
     const temperature = parseFloat(parts[0]);
     const moisture = parseFloat(parts[1]);
     const light = parseFloat(parts[2]);
-    if (!isNaN(temperature) && !isNaN(moisture) && !isNaN(light)) {
+    if (!Number.isNaN(temperature) && !Number.isNaN(moisture) && !Number.isNaN(light)) {
       return { temperature, moisture, light };
     }
   }
 
-  // 4. Try parsing binary format (3 floats of 4 bytes each = 12 bytes)
+  // 4. Binary float: 3 floats x 4 bytes
   if (data.length === 12) {
     try {
-      const temperature = data.readFloatLE(0);
-      const moisture = data.readFloatLE(4);
-      const light = data.readFloatLE(8);
-      return { temperature, moisture, light };
-    } catch (e) { }
+      return {
+        temperature: data.readFloatLE(0),
+        moisture: data.readFloatLE(4),
+        light: data.readFloatLE(8)
+      };
+    } catch (_) { }
   }
 
-  // 5. Try parsing binary format (3 int16 of 2 bytes each = 6 bytes)
+  // 5. Binary int16: 3 int16 x 2 bytes
   if (data.length === 6) {
     try {
-      const temperature = data.readInt16LE(0);
-      const moisture = data.readInt16LE(2);
-      const light = data.readInt16LE(4);
-      return { temperature, moisture, light };
-    } catch (e) { }
+      return {
+        temperature: data.readInt16LE(0),
+        moisture: data.readInt16LE(2),
+        light: data.readInt16LE(4)
+      };
+    } catch (_) { }
   }
 
   return null;
 }
 
-function applyPicoState(pico: Pico, data: Buffer, characteristicUuid: string, source: 'notification' | 'polling') {
+function applyPicoState(
+  pico: Pico,
+  data: Buffer,
+  characteristicUuid: string,
+  source: 'notification' | 'polling'
+) {
   const updatedState = parsePicoState(data, pico.state);
   if (!updatedState) return;
 
@@ -124,7 +131,18 @@ function applyPicoState(pico: Pico, data: Buffer, characteristicUuid: string, so
     pico.setState(updatedState);
   } catch (error) {
     const rawValue = data.toString('utf-8').trim();
-    console.error(`[Bluetooth ${source}] Ignoring invalid sensor payload from Pico [${pico.id}] characteristic [${characteristicUuid}] value [${rawValue}]`, error instanceof Error ? error.message : error);
+    console.error(
+      `[Bluetooth ${source}] Ignoring invalid sensor payload from Pico [${pico.id}] characteristic [${characteristicUuid}] value [${rawValue}]`,
+      error instanceof Error ? error.message : error
+    );
+  }
+}
+
+function clearPicoPolling(picoId: string) {
+  const timer = pollingTimers.get(picoId);
+  if (timer) {
+    clearInterval(timer);
+    pollingTimers.delete(picoId);
   }
 }
 
@@ -137,170 +155,240 @@ noble.on('stateChange', async (state) => {
     pollingTimers.clear();
     connectedPeripherals.clear();
     connectingPeripherals.clear();
+    connectionQueue.length = 0;
     await stopScanning();
   }
 });
+
+async function processConnectionQueue() {
+  if (connectionQueueRunning) return;
+  connectionQueueRunning = true;
+
+  try {
+    while (connectionQueue.length > 0) {
+      const item = connectionQueue.shift();
+      if (!item) continue;
+
+      const { peripheral, picoId, localName } = item;
+
+      // The device may have disconnected or been handled while it was queued.
+      if (!connectingPeripherals.has(picoId) || connectedPeripherals.has(picoId)) {
+        continue;
+      }
+
+      try {
+        // Only one connection attempt runs at a time. This is much safer for
+        // adapters that do not behave well when scanning and connecting overlap.
+        await stopScanning();
+        await peripheral.connectAsync();
+
+        let pico = picoList[picoId];
+        if (!pico) {
+          pico = new Pico({
+            id: picoId,
+            name: localName || `Pico-${picoId}`,
+            connected: true,
+            state: { temperature: 0, moisture: 0, light: 0 }
+          });
+          picoList[picoId] = pico;
+        } else {
+          pico.setConnected(true);
+          if (localName) pico.name = localName;
+        }
+
+        connectedPeripherals.set(picoId, peripheral);
+        connectingPeripherals.delete(picoId);
+
+        peripheral.once('disconnect', () => {
+          pico!.setConnected(false);
+          connectedPeripherals.delete(picoId);
+          connectingPeripherals.delete(picoId);
+          clearPicoPolling(picoId);
+
+          // Allow this device to be discovered again after disconnect.
+          void startScanning();
+        });
+
+        const { characteristics } =
+          await peripheral.discoverAllServicesAndCharacteristicsAsync();
+
+        let hasSubscription = false;
+
+        // 1. Subscribe to Notify/Indicate characteristics.
+        for (const characteristic of characteristics) {
+          const props = characteristic.properties;
+          if (!props.includes('notify') && !props.includes('indicate')) continue;
+
+          // Keep byte data intact. JSON may be fragmented across notifications,
+          // while binary sensor packets should be parsed as complete packets.
+          let pendingText = '';
+
+          characteristic.on('data', (dataBuffer: Buffer) => {
+            // Binary sensor packets are complete BLE notifications in the
+            // supported 6-byte/12-byte formats.
+            if (dataBuffer.length === 6 || dataBuffer.length === 12) {
+              applyPicoState(pico!, dataBuffer, characteristic.uuid, 'notification');
+              return;
+            }
+
+            const chunk = dataBuffer.toString('utf-8');
+            pendingText += chunk;
+
+            // Handle complete JSON objects split across notifications.
+            while (true) {
+              const start = pendingText.indexOf('{');
+
+              if (start < 0) {
+                // If this is plain text rather than JSON, keep only a small
+                // amount of data so malformed input cannot grow forever.
+                if (pendingText.length > 4096) pendingText = pendingText.slice(-1024);
+                break;
+              }
+
+              if (start > 0) pendingText = pendingText.slice(start);
+
+              const end = pendingText.indexOf('}');
+              if (end < 0) break;
+
+              const message = pendingText.slice(0, end + 1);
+              pendingText = pendingText.slice(end + 1);
+              applyPicoState(
+                pico!,
+                Buffer.from(message, 'utf-8'),
+                characteristic.uuid,
+                'notification'
+              );
+            }
+
+            // Plain text payloads such as "25.5,45,120" can be newline framed.
+            const lines = pendingText.split(/\r?\n/);
+            if (lines.length > 1) {
+              pendingText = lines.pop() ?? '';
+              for (const line of lines) {
+                const trimmed = line.trim();
+                if (trimmed) {
+                  applyPicoState(
+                    pico!,
+                    Buffer.from(trimmed, 'utf-8'),
+                    characteristic.uuid,
+                    'notification'
+                  );
+                }
+              }
+            }
+          });
+
+          characteristic.on('error', (error: Error) => {
+            console.error(
+              `[Bluetooth Subscription] Error on characteristic [${characteristic.uuid}] for Pico [${picoId}]:`,
+              error
+            );
+          });
+
+          await characteristic.subscribeAsync();
+          hasSubscription = true;
+        }
+
+        // 2. Poll readable-only characteristics when Notify/Indicate is absent.
+        const readableChars = characteristics.filter(c =>
+          c.properties.includes('read') &&
+          !c.properties.includes('notify') &&
+          !c.properties.includes('indicate')
+        );
+
+        if (readableChars.length > 0) {
+          const lastPolledValues = new Map<string, string>();
+          let pollInProgress = false;
+
+          const pollInterval = setInterval(async () => {
+            if (!connectedPeripherals.has(picoId)) {
+              clearInterval(pollInterval);
+              pollingTimers.delete(picoId);
+              return;
+            }
+
+            // Never start a second polling cycle before the previous one ends.
+            if (pollInProgress) return;
+            pollInProgress = true;
+
+            try {
+              for (const char of readableChars) {
+                const dataBuffer = await char.readAsync();
+                const rawValue = dataBuffer.toString('base64');
+
+                if (lastPolledValues.get(char.uuid) === rawValue) continue;
+                lastPolledValues.set(char.uuid, rawValue);
+
+                applyPicoState(pico!, dataBuffer, char.uuid, 'polling');
+              }
+            } catch (error: any) {
+              console.error(
+                `[Bluetooth Polling] Error polling Pico [${picoId}] characteristic [${readableChars.map(char => char.uuid).join(', ')}]:`,
+                error?.message || error
+              );
+            } finally {
+              pollInProgress = false;
+            }
+          }, hasSubscription ? 5000 : 1000);
+
+          pollingTimers.set(picoId, pollInterval);
+        }
+
+        if (!hasSubscription && readableChars.length === 0) {
+          console.warn(
+            `[Bluetooth Warning] Pico [${picoId}] has no Notify, Indicate, or Read characteristics!`
+          );
+        }
+      } catch (error) {
+        console.error(
+          `[Bluetooth Connection] Error during connection flow for Pico [${picoId}]:`,
+          error
+        );
+
+        connectedPeripherals.delete(picoId);
+        connectingPeripherals.delete(picoId);
+        clearPicoPolling(picoId);
+
+        try {
+          await peripheral.disconnectAsync();
+        } catch (_) {
+          // Ignore disconnect errors for a failed connection.
+        }
+      } finally {
+        // Resume scanning after each connection attempt so the next Pico can
+        // be discovered.
+        await startScanning();
+      }
+    }
+  } finally {
+    connectionQueueRunning = false;
+  }
+}
+
 // Device discovery handler
-noble.on('discover', async (peripheral) => {
+noble.on('discover', (peripheral) => {
   const localName = peripheral.advertisement.localName;
   const rawId = peripheral.address || peripheral.id;
   if (!rawId) return;
 
   const picoId = rawId.toLowerCase().replace(/[^a-z0-9]/g, '');
 
-  // Check if we already have an active or pending connection to this device
   if (connectingPeripherals.has(picoId) || connectedPeripherals.has(picoId)) {
     return;
   }
 
-  // Check if the device is a Pico based on the name keywords
-  const isPico = localName && PICO_NAME_KEYWORDS.some(keyword => localName.toLowerCase().includes(keyword));
-
-  if (!isPico) {
-    // If not matching keywords, skip this device
-    return;
-  }
-
-  // Start connection attempt
-  connectingPeripherals.add(picoId);
-  try {
-    // Scanning and connecting concurrently is unreliable on some adapters.
-    await stopScanning();
-    await peripheral.connectAsync();
-
-    // Setup Pico instance in picoList
-    let pico = picoList[picoId];
-    if (!pico) {
-      pico = new Pico({
-        id: picoId,
-        name: localName || `Pico-${picoId}`,
-        connected: true,
-        state: { temperature: 0, moisture: 0, light: 0 }
-      });
-      picoList[picoId] = pico;
-    } else {
-      pico.setConnected(true);
-      if (localName) {
-        pico.name = localName;
-      }
-    }
-
-    connectedPeripherals.set(picoId, peripheral);
-    connectingPeripherals.delete(picoId);
-
-    // Register disconnect listener
-    peripheral.once('disconnect', () => {
-      pico.setConnected(false);
-      connectedPeripherals.delete(picoId);
-      connectingPeripherals.delete(picoId);
-      const timer = pollingTimers.get(picoId);
-      if (timer) {
-        clearInterval(timer);
-        pollingTimers.delete(picoId);
-      }
-
-      // Auto-restart scanning to allow re-discovery
-      startScanning();
-    });
-
-    // Discover services and characteristics
-    const { characteristics } = await peripheral.discoverAllServicesAndCharacteristicsAsync();
-
-    let subscribedOrPolled = false;
-
-
-    // 1. Subscribe to Notify/Indicate characteristics
-    for (const characteristic of characteristics) {
-      const props = characteristic.properties;
-      if (props.includes('notify') || props.includes('indicate')) {
-        let pendingData = '';
-        characteristic.on('data', (dataBuffer: Buffer) => {
-          const chunk = dataBuffer.toString('utf-8');
-          pendingData += chunk;
-
-          // A notification can contain only part of a JSON line. Recover complete
-          // object frames from the byte stream instead of parsing each packet.
-          while (true) {
-            const start = pendingData.indexOf('{');
-            if (start < 0) {
-              pendingData = '';
-              break;
-            }
-            if (start > 0) pendingData = pendingData.slice(start);
-
-            const end = pendingData.indexOf('}');
-            if (end < 0) break;
-
-            const message = pendingData.slice(0, end + 1);
-            pendingData = pendingData.slice(end + 1).replace(/^\r?\n/, '');
-            applyPicoState(pico, Buffer.from(message, 'utf-8'), characteristic.uuid, 'notification');
-          }
-        });
-        characteristic.on('error', (error: Error) => {
-          console.error(`[Bluetooth Subscription] Error on characteristic [${characteristic.uuid}] for Pico [${picoId}]:`, error);
-        });
-
-        await characteristic.subscribeAsync();
-        subscribedOrPolled = true;
-      }
-    }
-
-    // 2. If no notification characteristics are available, fall back to polling
-    // readable-only characteristics. Reading a notify characteristic as well as
-    // subscribing to it can return partial UART frames and race the BLE stack.
-    const readableChars = characteristics.filter(c =>
-      c.properties.includes('read') &&
-      !c.properties.includes('notify') &&
-      !c.properties.includes('indicate')
+  const isPico =
+    !!localName &&
+    PICO_NAME_KEYWORDS.some(keyword =>
+      localName.toLowerCase().includes(keyword)
     );
-    if (readableChars.length > 0) {
-      const lastPolledValues = new Map<string, string>();
-      const pollInterval = setInterval(async () => {
-        if (!connectedPeripherals.has(picoId)) {
-          clearInterval(pollInterval);
-          return;
-        }
 
-        try {
-          for (const char of readableChars) {
-            const dataBuffer = await char.readAsync();
-            const rawValue = dataBuffer.toString('utf-8');
-            if (lastPolledValues.get(char.uuid) === rawValue) continue;
-            lastPolledValues.set(char.uuid, rawValue);
+  if (!isPico) return;
 
-            applyPicoState(pico, dataBuffer, char.uuid, 'polling');
-          }
-        } catch (e: any) {
-          console.error(`[Bluetooth Polling] Error polling Pico [${picoId}] characteristic [${readableChars.map(char => char.uuid).join(', ')}]:`, e.message || e);
-        }
-      }, subscribedOrPolled ? 5000 : 1000);
-      pollingTimers.set(picoId, pollInterval);
-
-      subscribedOrPolled = true;
-    }
-
-    if (!subscribedOrPolled) {
-      console.warn(`[Bluetooth Warning] Pico [${picoId}] has no Notify, Indicate, or Read characteristics!`);
-    }
-
-    // Keep scanning so additional Picos can connect while this one remains connected.
-    await startScanning();
-
-  } catch (err) {
-    console.error(`[Bluetooth Connection] Error during connection flow for Pico [${picoId}]:`, err);
-    connectedPeripherals.delete(picoId);
-    connectingPeripherals.delete(picoId);
-    const timer = pollingTimers.get(picoId);
-    if (timer) {
-      clearInterval(timer);
-      pollingTimers.delete(picoId);
-    }
-
-    // Attempt to disconnect if partially connected
-    try {
-      await peripheral.disconnectAsync();
-    } catch (_) { }
-    await startScanning();
-  }
+  // Queue the device instead of starting another connection flow from inside
+  // the discover event. This prevents concurrent stopScan/connect/startScan
+  // races when several Picos advertise at nearly the same time.
+  connectingPeripherals.add(picoId);
+  connectionQueue.push({ peripheral, picoId, localName });
+  void processConnectionQueue();
 });
-
