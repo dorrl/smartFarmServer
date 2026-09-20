@@ -6,6 +6,28 @@ import { PicoState } from './types.js';
 const connectedPeripherals = new Map<string, any>();
 const connectingPeripherals = new Set<string>();
 const pollingTimers = new Map<string, ReturnType<typeof setInterval>>();
+let scanning = false;
+
+async function startScanning() {
+  if (scanning) return;
+  try {
+    await noble.startScanningAsync([], true);
+    scanning = true;
+  } catch (error) {
+    console.error('[Bluetooth Scanner] Error starting scan:', error);
+  }
+}
+
+async function stopScanning() {
+  if (!scanning) return;
+  try {
+    await noble.stopScanningAsync();
+  } catch (error) {
+    console.error('[Bluetooth Scanner] Error stopping scan:', error);
+  } finally {
+    scanning = false;
+  }
+}
 
 // Scan filtering: we can connect to any device whose name contains these keywords
 const PICO_NAME_KEYWORDS = ['pico', 'smartfarm', 'mydevice', 'farm'];
@@ -109,22 +131,13 @@ function applyPicoState(pico: Pico, data: Buffer, characteristicUuid: string, so
 // Noble state change handler
 noble.on('stateChange', async (state) => {
   if (state === 'poweredOn') {
-    try {
-      // Start scanning. Set allowDuplicates to true so we can rediscover devices or scan continuously
-      await noble.startScanningAsync([], true);
-    } catch (err) {
-      console.error('[Bluetooth Scanner] Error starting scan:', err);
-    }
+    await startScanning();
   } else {
     for (const timer of pollingTimers.values()) clearInterval(timer);
     pollingTimers.clear();
     connectedPeripherals.clear();
     connectingPeripherals.clear();
-    try {
-      await noble.stopScanningAsync();
-    } catch (err) {
-      console.error('[Bluetooth Scanner] Error stopping scan:', err);
-    }
+    await stopScanning();
   }
 });
 // Device discovery handler
@@ -152,7 +165,7 @@ noble.on('discover', async (peripheral) => {
   connectingPeripherals.add(picoId);
   try {
     // Scanning and connecting concurrently is unreliable on some adapters.
-    await noble.stopScanningAsync().catch(() => undefined);
+    await stopScanning();
     await peripheral.connectAsync();
 
     // Setup Pico instance in picoList
@@ -187,9 +200,7 @@ noble.on('discover', async (peripheral) => {
       }
 
       // Auto-restart scanning to allow re-discovery
-      noble.startScanningAsync([], true).catch(err => {
-        console.error('[Bluetooth Scanner] Error restarting scan on disconnect:', err);
-      });
+      startScanning();
     });
 
     // Discover services and characteristics
@@ -272,14 +283,24 @@ noble.on('discover', async (peripheral) => {
       console.warn(`[Bluetooth Warning] Pico [${picoId}] has no Notify, Indicate, or Read characteristics!`);
     }
 
+    // Keep scanning so additional Picos can connect while this one remains connected.
+    await startScanning();
+
   } catch (err) {
     console.error(`[Bluetooth Connection] Error during connection flow for Pico [${picoId}]:`, err);
+    connectedPeripherals.delete(picoId);
     connectingPeripherals.delete(picoId);
+    const timer = pollingTimers.get(picoId);
+    if (timer) {
+      clearInterval(timer);
+      pollingTimers.delete(picoId);
+    }
 
     // Attempt to disconnect if partially connected
     try {
       await peripheral.disconnectAsync();
     } catch (_) { }
+    await startScanning();
   }
 });
 
