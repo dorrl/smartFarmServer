@@ -32,7 +32,7 @@ async function stopScanning() {
 }
 
 // Scan filtering: we can connect to any device whose name contains these keywords
-const PICO_NAME_KEYWORDS = ['pico', 'smartfarm', 'mydevice', 'farm'];
+const PICO_NAME_KEYWORDS = ['smartfarm-pico'];
 
 /**
  * Parses received BLE buffer into PicoState.
@@ -201,7 +201,7 @@ async function processConnectionQueue() {
         connectingPeripherals.delete(picoId);
 
         peripheral.once('disconnect', () => {
-          console.log(`[BLE] Disconnected: ${picoId}`);
+          console.log(`[BLE] Disconnected: ${picoId} state=${peripheral.state} connected=${peripheral.connected}`);
           pico!.setConnected(false);
           connectedPeripherals.delete(picoId);
           connectingPeripherals.delete(picoId);
@@ -212,8 +212,15 @@ async function processConnectionQueue() {
         });
 
         console.log(`[BLE] Discovering services: ${picoId}`);
-        const { characteristics } =
-          await peripheral.discoverAllServicesAndCharacteristicsAsync();
+        let characteristics: any[];
+        try {
+          const result =
+            await peripheral.discoverAllServicesAndCharacteristicsAsync();
+          characteristics = result.characteristics;
+        } catch (error) {
+          console.error(`[BLE] Service discovery failed: ${picoId}`, error);
+          throw error;
+        }
         console.log(`[BLE] Services discovered: ${picoId} characteristics=${characteristics.length}`);
 
         let hasSubscription = false;
