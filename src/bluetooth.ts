@@ -177,11 +177,8 @@ async function processConnectionQueue() {
       }
 
       try {
-        console.log(`[BLE] Connecting: ${picoId} (${localName ?? '(no name)'})`);
         await stopScanning();
-        console.log(`[BLE] Scan stopped: ${picoId}`);
         await peripheral.connectAsync();
-        console.log(`[BLE] Connected: ${picoId}`);
 
         let pico = picoList[picoId];
         if (!pico) {
@@ -201,7 +198,6 @@ async function processConnectionQueue() {
         connectingPeripherals.delete(picoId);
 
         peripheral.once('disconnect', () => {
-          console.log(`[BLE] Disconnected: ${picoId} state=${peripheral.state} connected=${peripheral.connected}`);
           pico!.setConnected(false);
           connectedPeripherals.delete(picoId);
           connectingPeripherals.delete(picoId);
@@ -210,8 +206,6 @@ async function processConnectionQueue() {
           // Allow this device to be discovered again after disconnect.
           void startScanning();
         });
-
-        console.log(`[BLE] Discovering services: ${picoId}`);
         let characteristics: any[];
         try {
           const result =
@@ -221,7 +215,6 @@ async function processConnectionQueue() {
           console.error(`[BLE] Service discovery failed: ${picoId}`, error);
           throw error;
         }
-        console.log(`[BLE] Services discovered: ${picoId} characteristics=${characteristics.length}`);
 
         let hasSubscription = false;
 
@@ -295,10 +288,7 @@ async function processConnectionQueue() {
               error
             );
           });
-
-          console.log(`[BLE] Subscribing: Pico=${picoId} characteristic=${characteristic.uuid}`);
           await characteristic.subscribeAsync();
-          console.log(`[BLE] Subscribed: Pico=${picoId} characteristic=${characteristic.uuid}`);
           hasSubscription = true;
         }
 
@@ -346,8 +336,6 @@ async function processConnectionQueue() {
 
           pollingTimers.set(picoId, pollInterval);
         }
-
-        console.log(`[BLE] Connection complete: ${picoId}`);
 
         if (!hasSubscription && readableChars.length === 0) {
           console.warn(
@@ -407,13 +395,10 @@ noble.on('discover', (peripheral) => {
 
   if (!isPico) return;
 
-  console.log(`[BLE] Pico discovered: ${picoId} (${localName})`);
-
   // Queue the device instead of starting another connection flow from inside
   // the discover event. This prevents concurrent stopScan/connect/startScan
   // races when several Picos advertise at nearly the same time.
   connectingPeripherals.add(picoId);
-  console.log(`[BLE] Pico queued: ${picoId}`);
   connectionQueue.push({ peripheral, picoId, localName });
   void processConnectionQueue();
 });
