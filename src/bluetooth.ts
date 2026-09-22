@@ -202,10 +202,10 @@ async function processConnectionQueue() {
           connectedPeripherals.delete(picoId);
           connectingPeripherals.delete(picoId);
           clearPicoPolling(picoId);
-
-          // Allow this device to be discovered again after disconnect.
+          console.log(`[BLE] Disconnected: ${picoId}`);
           void startScanning();
         });
+
         let characteristics: any[];
         try {
           const result =
