@@ -56,13 +56,9 @@ async function connectWithTimeout(peripheral: any, picoId: string) {
       console.error(`[BLE] Connection attempt failed: ${picoId}`, error instanceof Error ? error.message : error);
       try {
         await peripheral.disconnectAsync();
-      } catch (_) {
-        // Ignore cleanup errors.
-      }
+      } catch (_) {}
 
-      if (attempt < CONNECT_RETRY_COUNT) {
-        await delay(CONNECT_RETRY_DELAY_MS);
-      }
+      if (attempt < CONNECT_RETRY_COUNT) await delay(CONNECT_RETRY_DELAY_MS);
     }
   }
 
@@ -200,37 +196,40 @@ async function processConnectionQueue() {
           const props = characteristic.properties;
           if (!props.includes('notify') && !props.includes('indicate')) continue;
 
+          // Pico uses BLEServiceUART::println(), so a complete JSON reading is
+          // newline-delimited but may be split across several BLE notifications.
+          // Buffer by newline instead of trying to parse individual BLE packets.
           let pendingText = '';
+
           characteristic.on('data', (dataBuffer: Buffer) => {
             if (dataBuffer.length === 6 || dataBuffer.length === 12) {
               applyPicoState(pico!, dataBuffer, characteristic.uuid, 'notification');
               return;
             }
 
-            const chunk = dataBuffer.toString('utf-8');
-            pendingText += chunk;
+            pendingText += dataBuffer.toString('utf-8');
 
-            while (true) {
-              const start = pendingText.indexOf('{');
-              if (start < 0) {
-                if (pendingText.length > 4096) pendingText = pendingText.slice(-1024);
-                break;
-              }
-              if (start > 0) pendingText = pendingText.slice(start);
-              const end = pendingText.indexOf('}');
-              if (end < 0) break;
-              const message = pendingText.slice(0, end + 1);
-              pendingText = pendingText.slice(end + 1);
-              applyPicoState(pico!, Buffer.from(message, 'utf-8'), characteristic.uuid, 'notification');
+            // Process only complete newline-delimited messages. This prevents a
+            // JSON object split at an arbitrary BLE packet boundary from being
+            // treated as a complete sensor reading.
+            const lines = pendingText.split(/\r?\n/);
+            pendingText = lines.pop() ?? '';
+
+            for (const line of lines) {
+              const message = line.trim();
+              if (!message) continue;
+              applyPicoState(
+                pico!,
+                Buffer.from(message, 'utf-8'),
+                characteristic.uuid,
+                'notification'
+              );
             }
 
-            const lines = pendingText.split(/\r?\n/);
-            if (lines.length > 1) {
-              pendingText = lines.pop() ?? '';
-              for (const line of lines) {
-                const trimmed = line.trim();
-                if (trimmed) applyPicoState(pico!, Buffer.from(trimmed, 'utf-8'), characteristic.uuid, 'notification');
-              }
+            // Protect against malformed devices continuously sending data
+            // without a newline. Keep enough data for a normal sensor packet.
+            if (pendingText.length > 4096) {
+              pendingText = pendingText.slice(-1024);
             }
           });
 
@@ -241,7 +240,12 @@ async function processConnectionQueue() {
           hasSubscription = true;
         }
 
-        const readableChars = characteristics.filter((c: any) => c.properties.includes('read') && !c.properties.includes('notify') && !c.properties.includes('indicate'));
+        const readableChars = characteristics.filter((c: any) =>
+          c.properties.includes('read') &&
+          !c.properties.includes('notify') &&
+          !c.properties.includes('indicate')
+        );
+
         if (readableChars.length > 0) {
           const lastPolledValues = new Map<string, string>();
           let pollInProgress = false;
