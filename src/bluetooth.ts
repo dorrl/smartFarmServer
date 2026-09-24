@@ -98,6 +98,7 @@ function enqueuePico(peripheral: Peripheral, picoId: string, localName?: string)
   if (connectedPeripherals.has(picoId) || connectingPeripherals.has(picoId) || queuedPicos.has(picoId)) return;
 
   queuedPicos.add(picoId);
+  connectingPeripherals.add(picoId);
   connectionQueue.push({ peripheral, picoId, localName });
   console.log(`[BLE] Pico queued: ${picoId}`);
   void processConnectionQueue();
@@ -380,12 +381,14 @@ noble.on('discover', peripheral => {
   if (!rawId) return;
 
   const picoId = normalizePicoId(rawId);
-  const isPico = !!localName && PICO_NAME_KEYWORDS.some(keyword => localName.toLowerCase().includes(keyword));
+  const isKnownPico = !!picoList[picoId];
+  const isPico = isKnownPico || (!!localName && PICO_NAME_KEYWORDS.some(keyword => localName.toLowerCase().includes(keyword)));
   if (!isPico) return;
 
+  const existing = knownPicos.get(picoId);
   knownPicos.set(picoId, {
     peripheral,
-    localName,
+    localName: localName || existing?.localName || picoList[picoId]?.name,
     lastSeenAt: Date.now()
   });
 
