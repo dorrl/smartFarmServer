@@ -362,18 +362,7 @@ setInterval(() => {
   void recoverScanning();
 }, SCAN_RECOVERY_INTERVAL_MS);
 
-noble.on('scanStart', () => {
-  scanning = true;
-});
 
-noble.on('scanStop', () => {
-  scanning = false;
-  if (adapterPoweredOn) {
-    setTimeout(() => {
-      void startScanning();
-    }, 250);
-  }
-});
 
 noble.on('stateChange', async state => {
   adapterPoweredOn = state === 'poweredOn';
