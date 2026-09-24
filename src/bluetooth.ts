@@ -106,13 +106,7 @@ function enqueuePico(peripheral: Peripheral, picoId: string, localName?: string)
 }
 
 async function recoverScanning() {
-  if (!adapterPoweredOn || !scanning) return;
-  try {
-    await noble.stopScanningAsync();
-  } catch (_) {
-    // Ignore a scan-stop race; the next start attempt will recover scanning.
-  }
-  scanning = false;
+  if (!adapterPoweredOn || scanning) return;
   await startScanning();
 }
 
@@ -367,6 +361,19 @@ setInterval(() => {
 setInterval(() => {
   void recoverScanning();
 }, SCAN_RECOVERY_INTERVAL_MS);
+
+noble.on('scanStart', () => {
+  scanning = true;
+});
+
+noble.on('scanStop', () => {
+  scanning = false;
+  if (adapterPoweredOn) {
+    setTimeout(() => {
+      void startScanning();
+    }, 250);
+  }
+});
 
 noble.on('stateChange', async state => {
   adapterPoweredOn = state === 'poweredOn';
