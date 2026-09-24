@@ -16,6 +16,7 @@ const connectingPeripherals = new Set<string>();
 const queuedPicos = new Set<string>();
 const pollingTimers = new Map<string, ReturnType<typeof setInterval>>();
 const reconnectTimers = new Map<string, ReturnType<typeof setTimeout>>();
+const knownPicos = new Map<string, { peripheral: Peripheral; localName?: string; lastSeenAt: number }>();
 const connectionQueue: QueuedDevice[] = [];
 
 let scanning = false;
@@ -27,6 +28,8 @@ const CONNECT_TIMEOUT_MS = 12_000;
 const CONNECT_RETRY_COUNT = 2;
 const CONNECT_RETRY_DELAY_MS = 1_000;
 const RECONNECT_DELAY_MS = 2_000;
+const CONNECTION_SWEEP_INTERVAL_MS = 5_000;
+const KNOWN_PICO_STALE_MS = 30_000;
 const MAX_PENDING_TEXT = 4096;
 
 function delay(ms: number) {
@@ -90,11 +93,37 @@ function clearReconnectTimer(picoId: string) {
   }
 }
 
+function enqueuePico(peripheral: Peripheral, picoId: string, localName?: string) {
+  if (!adapterPoweredOn) return;
+  if (connectedPeripherals.has(picoId) || connectingPeripherals.has(picoId) || queuedPicos.has(picoId)) return;
+
+  queuedPicos.add(picoId);
+  connectionQueue.push({ peripheral, picoId, localName });
+  console.log(`[BLE] Pico queued: ${picoId}`);
+  void processConnectionQueue();
+}
+
+function sweepKnownPicos() {
+  if (!adapterPoweredOn) return;
+  const now = Date.now();
+
+  for (const [picoId, device] of knownPicos) {
+    if (now - device.lastSeenAt > KNOWN_PICO_STALE_MS) {
+      knownPicos.delete(picoId);
+      continue;
+    }
+    if (!connectedPeripherals.has(picoId) && !connectingPeripherals.has(picoId) && !queuedPicos.has(picoId)) {
+      enqueuePico(device.peripheral, picoId, device.localName);
+    }
+  }
+}
+
 function scheduleReconnect(picoId: string) {
   if (!adapterPoweredOn || reconnectTimers.has(picoId)) return;
   reconnectTimers.set(picoId, setTimeout(() => {
     reconnectTimers.delete(picoId);
     void startScanning();
+    sweepKnownPicos();
   }, RECONNECT_DELAY_MS));
 }
 
@@ -318,6 +347,10 @@ async function processConnectionQueue() {
   }
 }
 
+setInterval(() => {
+  sweepKnownPicos();
+}, CONNECTION_SWEEP_INTERVAL_MS);
+
 noble.on('stateChange', async state => {
   adapterPoweredOn = state === 'poweredOn';
   if (adapterPoweredOn) {
@@ -337,6 +370,7 @@ noble.on('stateChange', async state => {
   connectedPeripherals.clear();
   connectingPeripherals.clear();
   queuedPicos.clear();
+  knownPicos.clear();
   connectionQueue.length = 0;
 });
 
@@ -348,10 +382,12 @@ noble.on('discover', peripheral => {
   const picoId = normalizePicoId(rawId);
   const isPico = !!localName && PICO_NAME_KEYWORDS.some(keyword => localName.toLowerCase().includes(keyword));
   if (!isPico) return;
-  if (connectedPeripherals.has(picoId) || connectingPeripherals.has(picoId) || queuedPicos.has(picoId)) return;
 
-  queuedPicos.add(picoId);
-  connectionQueue.push({ peripheral, picoId, localName });
-  console.log(`[BLE] Pico queued: ${picoId}`);
-  void processConnectionQueue();
+  knownPicos.set(picoId, {
+    peripheral,
+    localName,
+    lastSeenAt: Date.now()
+  });
+
+  enqueuePico(peripheral, picoId, localName);
 });
