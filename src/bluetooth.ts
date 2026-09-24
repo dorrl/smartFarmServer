@@ -215,7 +215,9 @@ function applyPicoState(pico: Pico, data: Buffer, characteristicUuid: string, so
 function attachNotificationHandler(pico: Pico, characteristic: Characteristic) {
   let pendingText = '';
   characteristic.on('data', (data: Buffer) => {
-    if (data.length === 6 || data.length === 12) {
+    const looksLikeBinary = data.length === 6 || data.length === 12;
+    const looksLikeText = data.some(byte => byte === 10 || byte === 13 || (byte >= 32 && byte <= 126));
+    if (looksLikeBinary && !looksLikeText) {
       applyPicoState(pico, data, characteristic.uuid, 'notification');
       return;
     }
