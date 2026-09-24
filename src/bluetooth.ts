@@ -29,7 +29,8 @@ const CONNECT_RETRY_COUNT = 2;
 const CONNECT_RETRY_DELAY_MS = 1_000;
 const RECONNECT_DELAY_MS = 2_000;
 const CONNECTION_SWEEP_INTERVAL_MS = 5_000;
-const KNOWN_PICO_STALE_MS = 30_000;
+const SCAN_RECOVERY_INTERVAL_MS = 10_000;
+const KNOWN_PICO_STALE_MS = 60_000;
 const MAX_PENDING_TEXT = 4096;
 
 function delay(ms: number) {
@@ -102,6 +103,17 @@ function enqueuePico(peripheral: Peripheral, picoId: string, localName?: string)
   connectionQueue.push({ peripheral, picoId, localName });
   console.log(`[BLE] Pico queued: ${picoId}`);
   void processConnectionQueue();
+}
+
+async function recoverScanning() {
+  if (!adapterPoweredOn || !scanning) return;
+  try {
+    await noble.stopScanningAsync();
+  } catch (_) {
+    // Ignore a scan-stop race; the next start attempt will recover scanning.
+  }
+  scanning = false;
+  await startScanning();
 }
 
 function sweepKnownPicos() {
@@ -351,6 +363,10 @@ async function processConnectionQueue() {
 setInterval(() => {
   sweepKnownPicos();
 }, CONNECTION_SWEEP_INTERVAL_MS);
+
+setInterval(() => {
+  void recoverScanning();
+}, SCAN_RECOVERY_INTERVAL_MS);
 
 noble.on('stateChange', async state => {
   adapterPoweredOn = state === 'poweredOn';
