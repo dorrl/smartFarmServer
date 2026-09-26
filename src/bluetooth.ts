@@ -393,10 +393,6 @@ noble.on('discover', peripheral => {
   if (!rawId) return;
 
   const picoId = normalizePicoId(rawId);
-
-  // TEMP DEBUG: print every discovered BLE device's name and ID.
-  console.log(`[BLE][DISCOVER] name=${localName || '(none)'} id=${picoId}`);
-
   const isKnownPico = !!picoList[picoId];
   const isPico = isKnownPico || (!!localName && PICO_NAME_KEYWORDS.some(keyword => localName.toLowerCase().includes(keyword)));
   if (!isPico) return;
